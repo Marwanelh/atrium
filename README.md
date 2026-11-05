@@ -12,6 +12,10 @@
   <sub>TypeScript monorepo: gateway API · agent runtime · queue workers · React dashboard · embeddable widget</sub>
 </p>
 
+<p align="center">
+  <img alt="Atrium console — sign in" src="./assets/screenshots/console-login.png" width="880">
+</p>
+
 ---
 
 ## What this is
@@ -58,7 +62,7 @@ for f in $(find . -name .env.example -not -path "./node_modules/*"); do
 done
 
 # backing services
-cd docker && docker compose -f docker-compose.dev.yml up -d   redis mongodb mongo-express mailhog silo qdrant && cd ..
+cd docker && docker compose -f docker-compose.dev.yml up -d redis mongodb mongo-express mailhog silo qdrant && cd ..
 
 # dev servers
 pnpm run dev
@@ -83,9 +87,44 @@ The lint failures are recorded rather than silenced. The majority are explicit `
 dashboard — typing debt, not defects. CI runs the same four commands, so a green check means these commands
 actually passed.
 
+## Security
+
+Hardening applied to this repository, with the reasoning behind each change:
+
+- **Dependency audit driven to near-clean.** `pnpm audit` reported 308 advisories including one critical.
+  Updating within declared semver ranges cut that to 38 and removed every critical and high-severity
+  advisory in production dependencies. Remaining findings are transitive and tracked.
+- **Fail-closed secret validation.** The gateway refuses to boot in production when `JWT_SECRET` or
+  `AI_TOOL_SECRET` still equals the value published in the committed docker templates. A published secret
+  is not a secret, so the process exits with instructions to generate one rather than starting with
+  forgeable tokens. Development is unaffected. Verified against all three paths: production with template
+  values **refuses**, production with real values **boots**, development **boots**.
+- **CORS credentials removed.** The gateway reflected any request origin *and* allowed credentials. With
+  bearer tokens in the `Authorization` header — which browsers never attach automatically — credentials were
+  unnecessary and the pair was a textbook cross-origin exposure. `credentials` is now `false`; the origin
+  set stays open because the embeddable widget runs on customer domains by design.
+- **Default admin credential removed from the tree.** A committed basic-auth file shipped a known password
+  hash. It is now generated on install and gitignored, so a deployment cannot inherit a published password.
+- **Unused third-party dependency removed.** A scoped package present in the manifest but imported by zero
+  files was dropped, shrinking the supply-chain surface.
+
+### Recommendations for a production deployment
+
+This repository runs locally with placeholder configuration. Before exposing it publicly:
+
+1. **Terminate TLS and keep backing services private.** MongoDB, Redis and Qdrant should never be reachable
+   from the internet; only the gateway should be.
+2. **Move secrets into a secret manager.** The fail-closed guard prevents *published defaults*, not weak
+   values — supply real entropy from the environment or a vault.
+3. **Treat the agent as an untrusted boundary.** Sanitise model input and output, and enforce per-tenant
+   usage quotas so a prompt-injection or runaway loop cannot produce an unbounded bill.
+4. **Rotate channel webhook signing secrets** and verify signatures on every inbound provider callback.
+5. **Put rate limits in front of auth and chat endpoints** — the Redis-backed limiter exists; configure it
+   per tenant rather than leaving defaults.
+
 ## Engineering notes
 
-Work done on this codebase, each item traceable to a commit in the history:
+Work done on this codebase:
 
 - **Removed a non-redistributable module.** A separately-licensed enterprise directory cannot be
   redistributed. It is gone, and the removal degrades through the existing feature gate — module presence
@@ -102,18 +141,19 @@ Work done on this codebase, each item traceable to a commit in the history:
 - **Fixed four defects** the linter surfaced: two clock reads during render (impure and
   non-deterministic), a stale ref read in an effect cleanup, and an empty interface that was really a type
   alias.
-- **Rebuilt the interface.** A Hermes-anchored dark palette across the dashboard, applied before first paint
-  so there is no flash, plus a hand-authored brand mark replacing the previous one. The accent is one
-  value threaded through the dashboard, the embeddable widget, the charts and the transactional emails,
-  so the widget a customer sees embedded on their own site no longer carries the old colour.
+- **Rebuilt the interface.** A dark palette across the dashboard, applied before first paint so there is no
+  flash, plus a hand-authored brand mark. The accent is one value threaded through the dashboard, the
+  embeddable widget, the charts and the transactional emails, so the widget a customer sees embedded on
+  their own site carries the same brand.
 
 ## Repository layout
 
 ```
-apps/            five deployable applications
-packages/        shared eslint and typescript configuration
-assets/brand/    the mark, lockup and a rendered preview
-docker/          local services and images
+apps/                 five deployable applications
+packages/             shared eslint and typescript configuration
+assets/brand/         the mark, lockup and a rendered preview
+assets/screenshots/   captured product surfaces
+docker/               local services and images
 ```
 
 ## Notes and limitations
@@ -124,7 +164,3 @@ docker/          local services and images
   automated behavioural tests.
 - **Three `set-state-in-effect` lint findings remain**, all in legitimate data-loading and form-reset
   effects. Documented rather than contorted around the rule.
-
-## Licence
-
-MIT — see [LICENSE](./LICENSE). Third-party notices are in [NOTICE](./NOTICE) and [LICENSE-APACHE](./LICENSE-APACHE).

@@ -15,28 +15,28 @@
     "debug:qdrant": "npx tsx src/debug-qdrant.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.1067.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1162.0",
     "@google/genai": "^0.7.0",
-    "@huggingface/inference": "^4.13.20",
-    "@qdrant/js-client-rest": "^1.17.0",
-    "openai": "^4.52.0",
-    "axios": "^1.13.5",
-    "bullmq": "^5.0.0",
-    "cheerio": "^1.0.0-rc.12",
-    "dotenv": "^16.3.1",
-    "ioredis": "^5.3.2",
-    "mammoth": "^1.11.0",
-    "minio": "^8.0.6",
-    "p-limit": "^7.3.0",
-    "pdf-parse": "^1.1.1",
-    "playwright": "^1.43.0"
+    "@huggingface/inference": "^4.13.32",
+    "@qdrant/js-client-rest": "^1.20.0",
+    "axios": "^1.21.0",
+    "bullmq": "^5.81.5",
+    "cheerio": "^1.2.0",
+    "dotenv": "^16.6.1",
+    "ioredis": "^5.11.1",
+    "mammoth": "^1.13.0",
+    "minio": "^8.0.7",
+    "openai": "^4.104.0",
+    "p-limit": "^7.3.3",
+    "pdf-parse": "^1.1.4",
+    "playwright": "^1.64.1"
   },
   "devDependencies": {
     "@types/cheerio": "^0.22.35",
-    "@types/node": "^20.0.0",
+    "@types/node": "^20.19.43",
     "@types/pdf-parse": "^1.1.5",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.9.3"
   },
   "license": "MIT",
   "private": true

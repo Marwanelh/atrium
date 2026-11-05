@@ -62,8 +62,14 @@ class Application {
 
     this.app.use(
       cors({
-        origin: true, // Reflect request origin — allows requests from any origin
-        credentials: true,
+        // The embeddable widget runs on customer domains, so the set of origins is
+        // open by design and cannot be narrowed to a list.
+        origin: true,
+        // Credentials must stay off while the origin is reflected: `origin: true`
+        // with `credentials: true` tells a browser to send cookies to any site that
+        // asks. Authentication here is a bearer token in the Authorization header,
+        // which a browser never attaches automatically, so nothing needs it.
+        credentials: false,
         methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
         allowedHeaders: [
           "Content-Type",

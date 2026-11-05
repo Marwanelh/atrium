@@ -282,5 +282,42 @@ const config: Config = {
   },
 };
 
+/**
+ * Values that ship in the repository's docker templates so the stack starts locally.
+ *
+ * These are not secrets — they are published. A production process that inherits one
+ * signs tokens anyone who has read the repository can forge, so refuse to boot rather
+ * than run insecurely. Development is unaffected: the check only runs in production.
+ */
+const TEMPLATE_SECRETS = new Set([
+  "atrium-dev-jwt-secret-key-2025",
+  "atrium-dev-refresh-secret-key-2025",
+  "atrium_default_secret_2026",
+]);
+
+function assertSecretsAreNotTemplateDefaults(): void {
+  if (process.env.NODE_ENV !== "production") return;
+
+  const offenders: string[] = [];
+  const check = (label: string, value: string | undefined) => {
+    if (value && TEMPLATE_SECRETS.has(value)) offenders.push(label);
+  };
+
+  check("JWT_SECRET", config.jwt.secret);
+  check("JWT_REFRESH_SECRET", config.jwt.refreshSecret);
+  check("AI_TOOL_SECRET", process.env.AI_TOOL_SECRET);
+
+  if (offenders.length > 0) {
+    throw new Error(
+      `Refusing to start: ${offenders.join(", ")} still hold the value published in the ` +
+        `repository template. Tokens signed with it are forgeable by anyone who can read ` +
+        `the repository. Generate real values before deploying, for example:\n` +
+        `  node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`,
+    );
+  }
+}
+
+assertSecretsAreNotTemplateDefaults();
+
 export { config };
 export default config;
