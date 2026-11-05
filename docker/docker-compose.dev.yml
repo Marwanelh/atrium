@@ -1,0 +1,132 @@
+version: '3.8'
+
+services:
+  # Redis for Socket.IO adapter and caching
+  redis:
+    image: redis:7-alpine
+    container_name: Atrium-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    environment:
+      REDIS_PASSWORD: dev123
+    volumes:
+      - redis_data_dev:/data
+    command: redis-server --appendonly yes --requirepass dev123
+    networks:
+      - Atrium-dev-network
+
+  # MongoDB for data persistence
+  mongodb:
+    image: mongo:7
+    container_name: Atrium-mongodb-dev
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: dev123
+      MONGO_INITDB_DATABASE: Atrium-chat-dev
+    volumes:
+      - mongodb_data_dev:/data/db
+    networks:
+      - Atrium-dev-network
+
+  # MongoDB Express for database management (optional)
+  mongo-express:
+    image: mongo-express:1.0.2-18
+    container_name: Atrium-mongo-express-dev
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: dev123
+      ME_CONFIG_MONGODB_URL: mongodb://admin:dev123@mongodb:27017/
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: dev123
+    depends_on:
+      - mongodb
+    networks:
+      - Atrium-dev-network
+
+  # MailHog for email testing in development
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: Atrium-mailhog-dev
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP server port
+      - "8025:8025"  # Web UI port
+    networks:
+      - Atrium-dev-network
+
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: Atrium-qdrant-dev
+    restart: unless-stopped
+    ports:
+      - "6333:6333"  # REST API
+      - "6334:6334"  # gRPC
+    volumes:
+      - qdrant_data_dev:/qdrant/storage
+    networks:
+      - Atrium-dev-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:6333/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  silo:
+    image: pgsty/silo:latest
+    container_name: Atrium-silo-dev
+    restart: unless-stopped
+    ports:
+      - "9001:9001"  # API port (widget CDN)
+      - "9002:9002"  # Console (Web UI) port
+    environment:
+      # Silo's server process uses these compatibility environment variables.
+      MINIO_ROOT_USER: silo-admin
+      MINIO_ROOT_PASSWORD: silo-admin
+      # Enable CORS for widget serving
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    command: server /data --console-address ":9002" --address ":9001"
+    volumes:
+      - silo_data_dev:/data
+    networks:
+      - Atrium-dev-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  log-viewer:
+    image: amir20/dozzle:latest
+    container_name: Atrium-log-viewer-dev
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${LOG_VIEWER_PORT:-8888}:8080"
+    environment:
+      - DOZZLE_AUTH_PROVIDER=simple
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./users.yml:/data/users.yml:ro
+    networks:
+      - Atrium-dev-network
+
+
+volumes:
+  mongodb_data_dev:
+    driver: local
+  redis_data_dev:
+    driver: local
+  silo_data_dev:
+    driver: local
+  qdrant_data_dev:
+    driver: local
+
+networks:
+  Atrium-dev-network:
+    driver: bridge

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="Atrium" fill="currentColor">
+  <!--
+    Atrium mark: an arch with a doorway cut through it.
+
+    An atrium is the entrance space a building opens into, which is what this
+    product is for the customers who arrive through it. The form is a single
+    glyph built from two concentric arches, so it reads as a space you look
+    into rather than a symbol placed on top of one.
+
+    Geometry only — no strokes — so it holds its shape from a 16px favicon to
+    a banner. Filled with currentColor so it inherits the surrounding text
+    colour and needs no light/dark variants.
+  -->
+  <path d="M2.5 21.5V12A9.5 9.5 0 0 1 21.5 12V21.5H16V10A4 4 0 0 0 8 10V21.5Z"/>
+</svg>

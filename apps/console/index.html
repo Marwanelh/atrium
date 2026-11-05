@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Atrium - Open Source End-to-End Customer Support & Sales Automation</title>
+  <script>
+    // Apply the theme before the first paint. The provider sets the class in an
+    // effect, which runs after React mounts — so without this the page renders
+    // light and then flips, and the flash is worse than no dark mode at all.
+    // Keep the default in step with getPreferredTheme() in theme-provider.tsx.
+    (function () {
+      try {
+        var saved = localStorage.getItem("Atrium-theme");
+        var theme = saved === "light" || saved === "dark" ? saved : "dark";
+        if (theme === "dark") document.documentElement.classList.add("dark");
+      } catch (e) {
+        document.documentElement.classList.add("dark");
+      }
+    })();
+  </script>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

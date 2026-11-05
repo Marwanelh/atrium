@@ -1,0 +1,86 @@
+import { URL } from "url";
+import config from "@shared/infra/config";
+
+/**
+ * Normalizes a user-inputted domain name or URL down to its clean hostname.
+ * E.g., "https://www.example.com/some/path" -> "example.com"
+ *       "example.com:8080" -> "example.com"
+ *       "  WWW.SUB.EXAMPLE.COM  " -> "sub.example.com"
+ */
+export function normalizeDomain(input: string): string {
+  if (!input) return "";
+  let host = input.trim().toLowerCase();
+
+  // Ensure it has a protocol so URL parses it correctly
+  if (!/^https?:\/\//i.test(host)) {
+    host = "http://" + host;
+  }
+
+  try {
+    const parsed = new URL(host);
+    let hostname = parsed.hostname;
+
+    // Strip leading "www."
+    if (hostname.startsWith("www.")) {
+      hostname = hostname.substring(4);
+    }
+
+    return hostname;
+  } catch {
+    // Fallback: strip common patterns manually
+    let fallback = input.trim().toLowerCase();
+    fallback = fallback.replace(/^https?:\/\//i, "");
+    fallback = fallback.split("/")[0];
+    fallback = fallback.split(":")[0];
+    if (fallback.startsWith("www.")) {
+      fallback = fallback.substring(4);
+    }
+    return fallback;
+  }
+}
+
+export function isLocalDomain(input?: string): boolean {
+  if (!input) return false;
+
+  const raw = input.trim().toLowerCase();
+  if (raw === "::1" || raw === "[::1]") return true;
+
+  const hostname = normalizeDomain(input);
+  return hostname === "localhost"
+    || hostname === "::1"
+    || hostname === "[::1]"
+    || /^127(?:\.\d{1,3}){3}$/.test(hostname);
+}
+
+export function isAllowedDomain(domain: string): boolean {
+  if (!domain) return false;
+  const normalized = normalizeDomain(domain);
+  const allowed = config.app.allowedDomains || [];
+  return allowed.some(d => normalizeDomain(d) === normalized);
+}
+
+/**
+ * Checks an origin/hostname against a configured widget domain. Verified
+ * domains authorize their subdomains by default. Matching is boundary-aware,
+ * so `badexample.com` never matches `example.com`.
+ */
+export function isDomainMatch(
+  origin: string,
+  configuredDomain: string,
+  includeSubdomains = true,
+): boolean {
+  const clientDomain = normalizeDomain(origin);
+  const allowedDomain = normalizeDomain(configuredDomain);
+  if (!clientDomain || !allowedDomain) return false;
+  if (clientDomain === allowedDomain) return true;
+  return includeSubdomains && clientDomain.endsWith(`.${allowedDomain}`);
+}
+
+export function requiresDomainVerification(environment: string, origin?: string): boolean {
+  if (environment !== "production") return false;
+  if (!origin) return true;
+  const normalized = normalizeDomain(origin);
+  if (isLocalDomain(normalized)) return false;
+  if (isAllowedDomain(normalized)) return false;
+  return true;
+}

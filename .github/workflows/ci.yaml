@@ -1,0 +1,44 @@
+---
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  release:
+    types: [published]
+
+# Read-only for the whole workflow: verification never needs to write to the
+# repository, so the token cannot be used to mutate it.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The same contract a contributor runs locally. No step in this job masks a
+      # failure: a non-zero exit fails the job, and the aggregate script stops at
+      # the first failing category.
+      - name: Verify types, lint, tests and build
+        run: pnpm run verify

@@ -1,0 +1,402 @@
+import { Membership, User, MembershipRole, IMembership, Organization } from "@shared/models";
+import { Types } from "mongoose";
+import { enqueueInviteEmail } from "@shared/queues/email.queue";
+import NotificationService from "@modules/notification/notification.service";
+import crypto from "crypto";
+import { InviteMemberInput } from "./membership.types";
+
+export class MembershipService {
+    /**
+     * List all members of an organization.
+     */
+    static async listMembers(organizationId: string) {
+        const memberships = await Membership.find({
+            organizationId,
+            inviteStatus: { $in: ["accepted", "pending"] },
+        }).populate("userId", "name email status lastSeen");
+
+        return memberships.map((m) => ({
+            membershipId: m._id,
+            user: m.userId,
+            role: m.role,
+            inviteStatus: m.inviteStatus,
+            invitedAt: m.invitedAt,
+            activatedAt: m.activatedAt,
+        }));
+    }
+
+    /**
+     * Invite a user to our organization.
+     * If they already have an account – reuse it.
+     * If not – create a pending user record.
+     */
+    static async inviteMember(
+        invitedByUserId: string,
+        organizationId: string,
+        data: InviteMemberInput,
+    ) {
+        // Enforce role assignment rules
+        // Only owners can invite other owners.
+        const inviterMembership = await Membership.findOne({ userId: invitedByUserId, organizationId });
+        if (data.role === "owner" && inviterMembership?.role !== "owner") {
+            throw new Error("Admins cannot invite users as Owners");
+        }
+
+        // Check for existing membership
+        let user = await User.findOne({ email: data.email.toLowerCase() });
+
+        if (user) {
+            const existing = await Membership.findOne({ userId: user._id, organizationId });
+            if (existing) throw new Error("User is already a member of this organization");
+        } else {
+            // Create stub user
+            user = new User({
+                name: data.name,
+                email: data.email.toLowerCase(),
+                password: data.password ?? crypto.randomBytes(16).toString("hex"),
+                isActive: true,
+                emailVerified: false,
+            });
+            await user.save();
+        }
+
+        const inviteToken = crypto.randomBytes(32).toString("hex");
+        const inviteExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+        const membership = await Membership.create({
+            userId: user._id,
+            organizationId: new Types.ObjectId(organizationId),
+            role: data.role,
+            inviteStatus: "pending",
+            invitedBy: new Types.ObjectId(invitedByUserId),
+            invitedAt: new Date(),
+            inviteExpiresAt,
+            permissions: this.defaultPermissionsForRole(data.role),
+        });
+
+        // Store token on user for invite verification
+        await User.findByIdAndUpdate(user._id, {
+            emailVerificationToken: inviteToken,
+        });
+
+        // Enqueue invite email — fires and forgets; worker handles delivery
+        const org = await Organization.findById(organizationId).select("name").lean();
+        const emailSent = await enqueueInviteEmail(
+            data.email,
+            org?.name || "Your Organization",
+            data.role,
+            inviteToken,
+        );
+
+        await this.notifyRoleManagementAction(
+            organizationId,
+            invitedByUserId,
+            `Created ${this.displayName(user.name, data.email)} as ${this.roleLabel(data.role)}.`,
+            {
+                action: "member_created",
+                targetUserId: user._id.toString(),
+                targetMembershipId: membership._id.toString(),
+                role: data.role,
+            },
+        );
+
+        return { membership, inviteToken, emailSent };
+    }
+
+    /**
+     * Verify an invite token without accepting it.
+     */
+    static async verifyInvite(token: string) {
+        const user = await User.findOne({ emailVerificationToken: token });
+        if (!user) throw new Error("Invalid or expired invitation token");
+
+        const membership = await Membership.findOne({
+            userId: user._id,
+            inviteStatus: "pending",
+        }).populate("organizationId", "name slug");
+
+        if (!membership) throw new Error("Invitation not found");
+
+        if (membership.inviteExpiresAt && new Date() > membership.inviteExpiresAt) {
+            throw new Error("Invitation has expired. Please request a new invite.");
+        }
+
+        return {
+            email: user.email,
+            name: user.name,
+            requiresPassword: !user.emailVerified,
+            organization: membership.organizationId
+        };
+    }
+
+    /**
+     * Accept an invite by token.
+     */
+    static async acceptInvite(token: string, password?: string) {
+        const user = await User.findOne({
+            emailVerificationToken: token,
+        });
+
+        if (!user) throw new Error("Invalid or expired invitation token");
+
+        const membership = await Membership.findOne({
+            userId: user._id,
+            inviteStatus: "pending",
+        });
+
+        if (!membership) throw new Error("Invitation not found");
+
+        if (membership.inviteExpiresAt && new Date() > membership.inviteExpiresAt) {
+            throw new Error("Invitation has expired. Please request a new invite.");
+        }
+
+        membership.inviteStatus = "accepted";
+        membership.activatedAt = new Date();
+        await membership.save();
+
+        if (!user.emailVerified) {
+            if (!password) {
+                throw new Error("Password is required to complete registration");
+            }
+            user.password = password; // The User model pre-save hook will hash this
+        }
+
+        user.emailVerificationToken = undefined;
+        user.emailVerified = true;
+        user.isActive = true;
+        await user.save();
+
+        return { user, membership };
+    }
+
+    /**
+     * Resend an invitation to a pending member.
+     */
+    static async resendInvite(organizationId: string, memberId: string) {
+        const membership = await Membership.findOne({ _id: memberId, organizationId });
+
+        if (!membership) throw new Error("Membership not found");
+        if (membership.inviteStatus !== "pending") {
+            throw new Error("Can only resend invitations to pending members");
+        }
+
+        const user = await User.findById(membership.userId);
+        if (!user) throw new Error("User not found");
+
+        const inviteToken = crypto.randomBytes(32).toString("hex");
+        const inviteExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+        membership.inviteExpiresAt = inviteExpiresAt;
+        await membership.save();
+
+        user.emailVerificationToken = inviteToken;
+        await user.save();
+
+        // Enqueue invite email — fires and forgets; worker handles delivery
+        const org = await Organization.findById(organizationId).select("name").lean();
+        const emailSent = await enqueueInviteEmail(
+          user.email,
+          org?.name || "Your Organization",
+          membership.role,
+          inviteToken,
+        );
+
+        return { success: true, inviteToken, emailSent };
+    }
+
+    static async updateMemberRole(
+        organizationId: string,
+        targetMemberId: string,
+        newRole: MembershipRole,
+        requestingUserId: string,
+    ) {
+        const requester = await Membership.findOne({ userId: requestingUserId, organizationId });
+        const targetMembership = await Membership.findOne({ _id: targetMemberId, organizationId });
+
+        if (!targetMembership) throw new Error("Member not found");
+
+        if (requestingUserId === targetMembership.userId.toString()) {
+            throw new Error("Users cannot modify their own roles");
+        }
+
+        // Admins cannot modify owners or grant owner status
+        if (requester?.role === "admin") {
+            if (targetMembership.role === "owner") {
+                throw new Error("Admins cannot modify owner roles");
+            }
+            if (newRole === "owner") {
+                throw new Error("Admins cannot grant owner role");
+            }
+        }
+
+        const targetUser = await User.findById(targetMembership.userId).select("name email").lean();
+        const membership = await Membership.findOneAndUpdate(
+            { _id: targetMemberId, organizationId },
+            { role: newRole },
+            { returnDocument: "after" },
+        );
+
+        if (membership) {
+            const targetName = this.displayName(targetUser?.name, targetUser?.email);
+            await this.notifyRoleManagementAction(
+                organizationId,
+                requestingUserId,
+                `Updated ${this.possessive(targetName)} role to ${this.roleLabel(newRole)}.`,
+                {
+                    action: "role_updated",
+                    targetUserId: targetMembership.userId.toString(),
+                    targetMembershipId: targetMembership._id.toString(),
+                    previousRole: targetMembership.role,
+                    role: newRole,
+                },
+            );
+        }
+
+        return membership;
+    }
+
+    /**
+     * Suspend or Reactivate a member.
+     */
+    static async updateMemberStatus(
+        organizationId: string,
+        targetMemberId: string,
+        newStatus: "active" | "inactive",
+        requestingUserId: string,
+    ) {
+        const requester = await Membership.findOne({ userId: requestingUserId, organizationId });
+        const targetMembership = await Membership.findOne({ _id: targetMemberId, organizationId });
+
+        if (!targetMembership) throw new Error("Member not found");
+
+        if (requestingUserId === targetMembership.userId.toString()) {
+            throw new Error("Users cannot suspend or reactivate themselves");
+        }
+
+        if (targetMembership.role === "owner" && requestingUserId !== targetMembership.userId.toString()) {
+            const ownerCount = await Membership.countDocuments({ organizationId, role: "owner", inviteStatus: "accepted" });
+            // Let them suspend if they are an owner and there's another active owner
+            if (ownerCount <= 1) {
+                throw new Error("Cannot suspend the last active owner of an organization");
+            }
+        }
+
+        if (requester?.role === "admin" && targetMembership.role === "owner") {
+            throw new Error("Admins cannot modify owner status");
+        }
+
+        const targetUser = await User.findById(targetMembership.userId).select("name email").lean();
+        
+        let membership = null;
+        if (newStatus === "inactive") {
+            await Membership.findByIdAndDelete(targetMembership._id);
+        } else {
+            membership = await Membership.findOneAndUpdate(
+                { _id: targetMemberId, organizationId },
+                { inviteStatus: "accepted" },
+                { returnDocument: "after" },
+            );
+        }
+
+        if (newStatus === "inactive" || membership) {
+            const verb = newStatus === "active" ? "reactivated" : "suspended";
+            await this.notifyRoleManagementAction(
+                organizationId,
+                requestingUserId,
+                `${this.capitalize(verb)} ${this.displayName(targetUser?.name, targetUser?.email)}.`,
+                {
+                    action: newStatus === "active" ? "member_reactivated" : "member_suspended",
+                    targetUserId: targetMembership.userId.toString(),
+                    targetMembershipId: targetMembership._id.toString(),
+                    status: newStatus,
+                },
+            );
+        }
+
+        return membership;
+    }
+
+    /**
+     * Remove a member from an organization.
+     */
+    static async removeMember(organizationId: string, targetMemberId: string, requestingUserId: string) {
+        const requester = await Membership.findOne({ userId: requestingUserId, organizationId });
+        const targetMembership = await Membership.findOne({ _id: targetMemberId, organizationId });
+
+        if (!targetMembership) throw new Error("Member not found");
+
+        if (requestingUserId === targetMembership.userId.toString()) {
+            throw new Error("Users cannot remove themselves from the organization");
+        }
+
+        if (requester?.role === "admin" && (targetMembership.role === "admin" || targetMembership.role === "owner")) {
+            throw new Error("Admins cannot remove other Admins or Owners");
+        }
+
+        // Cannot remove the last owner of an organization
+        if (targetMembership.role === "owner") {
+            const ownerCount = await Membership.countDocuments({ organizationId, role: "owner" });
+            if (ownerCount <= 1) {
+                throw new Error("Cannot remove the last owner of an organization");
+            }
+        }
+
+        const targetUser = await User.findById(targetMembership.userId).select("name email").lean();
+        await Membership.findByIdAndDelete(targetMembership._id);
+        await this.notifyRoleManagementAction(
+            organizationId,
+            requestingUserId,
+            `Removed ${this.displayName(targetUser?.name, targetUser?.email)} from the organization.`,
+            {
+                action: "member_removed",
+                targetUserId: targetMembership.userId.toString(),
+                targetMembershipId: targetMembership._id.toString(),
+                role: targetMembership.role,
+            },
+        );
+    }
+
+    // ─── Helpers ───
+
+    private static async notifyRoleManagementAction(
+        organizationId: string,
+        actorUserId: string,
+        description: string,
+        metadata: Record<string, unknown>,
+    ) {
+        await NotificationService.create({
+            organizationId,
+            userId: actorUserId,
+            type: "administrative",
+            title: "Role Management",
+            description,
+            metadata,
+        });
+    }
+
+    private static displayName(name?: string, fallback?: string): string {
+        return (name || fallback || "this user").trim();
+    }
+
+    private static possessive(name: string): string {
+        return name.endsWith("s") ? `${name}'` : `${name}'s`;
+    }
+
+    private static roleLabel(role: MembershipRole): string {
+        return role.charAt(0).toUpperCase() + role.slice(1);
+    }
+
+    private static capitalize(value: string): string {
+        return value.charAt(0).toUpperCase() + value.slice(1);
+    }
+
+    private static defaultPermissionsForRole(role: MembershipRole): string[] {
+        if (role === "owner") {
+            return ["manage_agents", "view_analytics", "manage_settings", "manage_members"];
+        }
+        if (role === "admin") {
+            return ["manage_agents", "view_analytics", "manage_members"];
+        }
+        return [];
+    }
+}

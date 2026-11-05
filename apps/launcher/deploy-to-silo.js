@@ -1,0 +1,143 @@
+#!/usr/bin/env node
+
+import * as S3Sdk from 'minio';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const siloConfig = {
+  endPoint: process.env.SILO_ENDPOINT || 'localhost',
+  port: parseInt(process.env.SILO_PORT || '9001'),
+  useSSL: process.env.SILO_USE_SSL === 'true',
+  accessKey: process.env.SILO_ACCESS_KEY || 'silo-admin',
+  secretKey: process.env.SILO_SECRET_KEY || 'silo-admin',
+};
+
+const BUCKET_NAME = 'atrium-widget';
+const WIDGET_VERSION = 'v1';
+
+const siloClient = new S3Sdk.Client(siloConfig);
+
+function assertValidBucketName(bucketName) {
+  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucketName)) {
+    throw new Error(`Invalid Silo bucket name: ${bucketName}. Use lowercase letters, numbers, dots, or hyphens only.`);
+  }
+}
+
+async function ensureBucketExists() {
+  assertValidBucketName(BUCKET_NAME);
+  const exists = await siloClient.bucketExists(BUCKET_NAME);
+  if (!exists) {
+    await siloClient.makeBucket(BUCKET_NAME, 'us-east-1');
+  }
+}
+
+async function setBucketPolicy() {
+  const policy = {
+    Version: '2012-10-17',
+    Statement: [
+      {
+        Effect: 'Allow',
+        Principal: { AWS: ['*'] },
+        Action: ['s3:GetObject'],
+        Resource: [`arn:aws:s3:::${BUCKET_NAME}/*`],
+      },
+    ],
+  };
+  await siloClient.setBucketPolicy(BUCKET_NAME, JSON.stringify(policy));
+}
+
+
+function getContentType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  switch (ext) {
+    case '.js': return 'application/javascript';
+    case '.mjs': return 'application/javascript';
+    case '.css': return 'text/css';
+    case '.html': return 'text/html';
+    case '.json': return 'application/json';
+    case '.png': return 'image/png';
+    case '.jpg': return 'image/jpeg';
+    case '.svg': return 'image/svg+xml';
+    default: return 'application/octet-stream';
+  }
+}
+
+function getCacheControl(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+
+  // HTML should never be immutable; always allow fetching latest shell.
+  if (ext === '.html') {
+    return 'no-cache, no-store, must-revalidate';
+  }
+
+  // Versioned but unhashed assets: short cache to balance freshness and performance.
+  if (ext === '.js' || ext === '.mjs' || ext === '.css') {
+    return 'public, max-age=300';
+  }
+
+  // Default for static binary assets.
+  return 'public, max-age=86400';
+}
+
+async function uploadFile(localPath, remotePath) {
+  const contentType = getContentType(localPath);
+  const fileStream = fs.createReadStream(localPath);
+  const fileStat = fs.statSync(localPath);
+
+  const metadata = {
+    'Content-Type': contentType,
+    'Cache-Control': getCacheControl(localPath),
+    'Cross-Origin-Resource-Policy': 'cross-origin',
+  };
+
+  await siloClient.putObject(BUCKET_NAME, remotePath, fileStream, fileStat.size, metadata);
+  console.log(`✅ Uploaded ${remotePath}`);
+}
+
+async function uploadDir(localDirPath, remoteDirPrefix) {
+  const files = fs.readdirSync(localDirPath);
+  for (const file of files) {
+    const fullPath = path.join(localDirPath, file);
+    const stat = fs.statSync(fullPath);
+    const remotePath = `${remoteDirPrefix}/${file}`;
+
+    if (stat.isDirectory()) {
+      await uploadDir(fullPath, remotePath);
+    } else {
+      await uploadFile(fullPath, remotePath);
+    }
+  }
+}
+
+async function deployWidget() {
+  try {
+    console.log('🚀 Starting widget deployment to Silo...\n');
+
+    await ensureBucketExists();
+    await setBucketPolicy();
+
+    const distPath = path.join(__dirname, 'dist');
+    if (!fs.existsSync(distPath)) {
+      throw new Error('Widget build not found! Run `npm run build` first.');
+    }
+
+    await uploadDir(distPath, WIDGET_VERSION);
+
+    const protocol = siloConfig.useSSL ? 'https' : 'http';
+    const port = siloConfig.port === (siloConfig.useSSL ? 443 : 80) ? '' : `:${siloConfig.port}`;
+    const widgetUrl = `${protocol}://${siloConfig.endPoint}${port}/${BUCKET_NAME}/${WIDGET_VERSION}/Atrium.js`;
+
+    console.log('\n✨ Deployment complete!');
+    console.log(`   Loader: ${widgetUrl}`);
+
+  } catch (error) {
+    console.error('❌ Deployment failed:', error);
+    process.exit(1);
+  }
+}
+
+deployWidget();

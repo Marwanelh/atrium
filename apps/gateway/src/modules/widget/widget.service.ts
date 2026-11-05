@@ -1,0 +1,1173 @@
+import crypto from "crypto";
+import { Types } from "mongoose";
+import { Widget, Conversation, Membership, Message, Contact } from "@shared/models";
+import logger from "@shared/core/logger";
+import {
+  enqueueDomainVerificationPendingEmail,
+  enqueueDomainVerificationCompletedEmail,
+} from "@shared/queues/email.queue";
+import { buildDefaultWidgetConfig } from "@shared/core/widget-default-config";
+import config from "@shared/infra/config";
+import jwt from "jsonwebtoken";
+import dns from "dns";
+import {
+  isDomainMatch,
+  isLocalDomain,
+  normalizeDomain,
+  requiresDomainVerification,
+} from "@shared/utils/domain";
+import { redisClient } from "@shared/infra/redis";
+import {
+  ServiceError,
+  AIInteractionSource,
+  InitConversationInput,
+  InitConversationResult,
+} from "./widget.types";
+import { tracker } from "@shared/utils/tracker";
+
+const AI_INTERACTION_SOURCES = new Set<AIInteractionSource>([
+  "widget",
+  "qr",
+  "link",
+]);
+
+function normalizeInteractionSource(value: unknown): AIInteractionSource {
+  if (typeof value !== "string") return "widget";
+  const normalized = value.trim().toLowerCase() as AIInteractionSource;
+  return AI_INTERACTION_SOURCES.has(normalized) ? normalized : "widget";
+}
+
+function createServiceError(message: string, statusCode: number): ServiceError {
+  const err = new Error(message) as ServiceError;
+  err.statusCode = statusCode;
+  return err;
+}
+
+function withWidgetConfigDefaults(input: any, isUpdate = false): any {
+  const defaults = buildDefaultWidgetConfig();
+  const output = { ...input };
+
+  if (!isUpdate || input.appearance !== undefined) {
+    output.appearance = {
+      ...defaults.appearance,
+      ...(input.appearance || {}),
+    };
+    delete output.logoUrl;
+    delete output.appearance.logoUrl;
+  }
+
+  if (!isUpdate || input.behavior !== undefined) {
+    output.behavior = { ...defaults.behavior, ...(input.behavior || {}) };
+    output.behavior.allowedPageRules = Array.from(
+      new Set(
+        (Array.isArray(output.behavior.allowedPageRules)
+          ? output.behavior.allowedPageRules
+          : []
+        )
+          .map((rule: any) => String(rule || "").trim())
+          .filter(Boolean),
+      ),
+    ).slice(0, 50);
+  }
+
+  if (!isUpdate || input.ai !== undefined) {
+    output.ai = { ...defaults.ai, ...(input.ai || {}) };
+  }
+
+  if (!isUpdate || input.conversation !== undefined) {
+    output.conversation = {
+      collectUserInfo: {
+        ...defaults.conversation.collectUserInfo,
+        ...(input.conversation?.collectUserInfo || {}),
+      },
+    };
+  }
+
+  if (!isUpdate || input.features !== undefined) {
+    output.features = { ...defaults.features, ...(input.features || {}) };
+  }
+
+  if (!isUpdate || input.suggestions !== undefined) {
+    if (Array.isArray(input.suggestions)) {
+      output.suggestions = input.suggestions
+        .slice(0, 3)
+        .map((s: any) => ({
+          text: String(s.text || "").trim(),
+          showOutside: s.showOutside ?? true,
+          faqId: s.faqId ? String(s.faqId) : null,
+        }))
+        .filter((s: any) => s.text.length > 0);
+    } else if (!output.suggestions) {
+      output.suggestions = defaults.suggestions;
+    }
+  }
+
+  return output;
+}
+
+export class WidgetService {
+  private isMobileUserAgent(userAgent?: string): boolean {
+    if (!userAgent) return false;
+    return /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile/i.test(
+      userAgent,
+    );
+  }
+
+  private isQrReferrer(referrer?: string): boolean {
+    if (!referrer) return false;
+
+    try {
+      const parsed = new URL(referrer);
+      const get = (key: string) =>
+        (parsed.searchParams.get(key) || "").toLowerCase();
+
+      const source =
+        get("source") || get("src") || get("utm_source") || get("entry");
+      const medium = get("utm_medium") || get("medium");
+      const campaign = get("utm_campaign") || get("campaign");
+      const qrFlag = get("qr") || get("is_qr");
+
+      if ([source, medium, campaign].some((v) => v.includes("qr"))) return true;
+      if (qrFlag === "1" || qrFlag === "true" || qrFlag === "yes") return true;
+
+      return /\bqr\b|qrcode/.test(parsed.pathname.toLowerCase());
+    } catch {
+      return /[?&](source|src|utm_source|entry)=qr\b|[?&](qr|is_qr)=(1|true|yes)\b/i.test(
+        referrer,
+      );
+    }
+  }
+
+  shouldTrackMobileQrPageOpen(userAgent?: string, referrer?: string): boolean {
+    return this.isMobileUserAgent(userAgent) && this.isQrReferrer(referrer);
+  }
+
+  async generateWidgetToken(
+    AtriumPublicKey: string,
+    origin?: string,
+    requestOrigin?: string,
+  ) {
+    if (!AtriumPublicKey) {
+      throw createServiceError("Atrium public key is required", 400);
+    }
+
+    const widget = await Widget.findById(AtriumPublicKey);
+    if (!widget) {
+      throw createServiceError("Widget not found", 404);
+    }
+
+    const authorizedDomain = this.enforceVerifiedDomain(
+      widget,
+      origin || requestOrigin,
+    );
+
+    const widgetPayload = {
+      AtriumPublicKey,
+      displayName: widget.displayName || "Unknown Widget",
+      organizationId: widget.organizationId,
+      origin: authorizedDomain.domain,
+      verifiedDomainId: authorizedDomain.domainId,
+      originBound: true,
+      type: "widget_session",
+    };
+
+    const token = jwt.sign(widgetPayload, config.jwt.secret!, {
+      expiresIn: "24h",
+    });
+
+    return {
+      token,
+      expiresIn: "24h",
+    };
+  }
+
+  async getWidgetConfigByPublicKey(
+    AtriumPublicKey: string,
+    requestOrigin?: string,
+  ) {
+    if (!AtriumPublicKey) {
+      throw createServiceError("Atrium public key is required", 400);
+    }
+
+    const widget = await Widget.findById(AtriumPublicKey)
+      .select(
+        "organizationId displayName appearance behavior ai conversation features suggestions verifiedDomains verifiedDomain domainVerificationStatus",
+      )
+      .lean();
+
+    if (!widget) {
+      throw createServiceError("Widget not found", 404);
+    }
+
+    const authorizedDomain = this.enforceVerifiedDomain(widget, requestOrigin);
+
+    const defaults = buildDefaultWidgetConfig();
+    const { logoUrl: _ignoredLogoUrl, ...appearance } =
+      (widget as any).appearance || {};
+
+    // Local development and self-hosted installs do not require DNS verification.
+    const isDomainVerified =
+      !requiresDomainVerification(config.app.env, requestOrigin) ||
+      authorizedDomain.verified;
+    const endUserDomAccess = isDomainVerified
+      ? ((widget as any).features?.endUserDomAccess ?? false)
+      : false;
+
+    return {
+      organizationId: (widget as any).organizationId,
+      config: {
+        displayName: (widget as any).displayName,
+        appearance: {
+          ...defaults.appearance,
+          ...appearance,
+        },
+        behavior: {
+          ...defaults.behavior,
+          ...((widget as any).behavior || {}),
+        },
+        ai: {
+          enabled: (widget as any).ai?.enabled ?? defaults.ai.enabled,
+          fallbackToAgent:
+            (widget as any).ai?.fallbackToAgent ?? defaults.ai.fallbackToAgent,
+        },
+        conversation: {
+          collectUserInfo: {
+            ...defaults.conversation.collectUserInfo,
+            ...((widget as any).conversation?.collectUserInfo || {}),
+          },
+        },
+        features: {
+          ...defaults.features,
+          ...((widget as any).features || {}),
+          endUserDomAccess,
+        },
+        suggestions: Array.isArray((widget as any).suggestions)
+          ? (widget as any).suggestions
+          : defaults.suggestions,
+      },
+    };
+  }
+
+  private getEffectiveVerifiedDomains(widget: any): any[] {
+    const domains: any[] = Array.isArray(widget.verifiedDomains)
+      ? widget.verifiedDomains.map((entry: any) => ({
+          _id: entry._id?.toString(),
+          domain: normalizeDomain(entry.domain),
+          verificationToken: entry.verificationToken || null,
+          status: entry.status,
+          includeSubdomains: entry.includeSubdomains === true,
+          verifiedAt: entry.verifiedAt || null,
+          createdAt: entry.createdAt,
+          updatedAt: entry.updatedAt,
+        }))
+      : [];
+
+    // Dual-read the previous fields until all clients and records are migrated.
+    if (widget.verifiedDomain) {
+      const legacyDomain = normalizeDomain(widget.verifiedDomain);
+      if (!domains.some((entry) => entry.domain === legacyDomain)) {
+        domains.push({
+          _id: "legacy",
+          domain: legacyDomain,
+          verificationToken: widget.domainVerificationToken || null,
+          status: widget.domainVerificationStatus || "pending",
+          includeSubdomains: true,
+          verifiedAt:
+            widget.domainVerificationStatus === "verified"
+              ? widget.updatedAt || null
+              : null,
+          createdAt: widget.createdAt,
+          updatedAt: widget.updatedAt,
+        });
+      }
+    }
+
+    const configuredDomains = domains.filter((entry) => entry.domain);
+    const verifiedParents = configuredDomains.filter(
+      (entry) => entry.status === "verified",
+    );
+
+    return configuredDomains.map((entry) => {
+      const verifiedParent = verifiedParents.find(
+        (candidate) =>
+          candidate.domain !== entry.domain &&
+          isDomainMatch(entry.domain, candidate.domain),
+      );
+
+      if (!verifiedParent) {
+        return { ...entry, includeSubdomains: true };
+      }
+
+      return {
+        ...entry,
+        status: "verified",
+        includeSubdomains: true,
+        verificationToken: null,
+        verifiedAt: entry.verifiedAt || verifiedParent.verifiedAt || null,
+      };
+    });
+  }
+
+  private enforceVerifiedDomain(
+    widget: any,
+    requestOrigin?: string,
+  ): {
+    domain: string;
+    domainId?: string;
+    verified: boolean;
+  } {
+    const clientDomain = requestOrigin ? normalizeDomain(requestOrigin) : "";
+    if (!requiresDomainVerification(config.app.env, requestOrigin)) {
+      return { domain: clientDomain || "development", verified: true };
+    }
+
+    if (!requestOrigin || !clientDomain) {
+      throw createServiceError(
+        "Origin header is required for verified widgets",
+        403,
+      );
+    }
+
+    const matchedDomain = this.getEffectiveVerifiedDomains(widget).find(
+      (entry) =>
+        entry.status === "verified" &&
+        isDomainMatch(clientDomain, entry.domain),
+    );
+
+    if (!matchedDomain) {
+      throw createServiceError(
+        `Unauthorized origin: "${clientDomain}" is not a verified widget domain`,
+        403,
+      );
+    }
+
+    return {
+      domain: clientDomain,
+      domainId: matchedDomain._id,
+      verified: true,
+    };
+  }
+
+  async getOrganizationIdByPublicKey(publicKey: string) {
+    if (!publicKey) {
+      throw createServiceError("Public key is required", 400);
+    }
+
+    const widget = await Widget.findById(publicKey)
+      .select("organizationId")
+      .lean();
+
+    if (!widget) {
+      throw createServiceError("Widget not found", 404);
+    }
+
+    return (widget as any).organizationId?.toString();
+  }
+
+  async createWidget(organizationId: string, widgetData: any) {
+    const normalizedWidgetData = withWidgetConfigDefaults(widgetData || {});
+    const existingWidget = await Widget.findOne({ organizationId });
+
+    if (existingWidget) {
+      const cleanUpdates: any = { ...normalizedWidgetData, organizationId };
+      if (widgetData?.verifiedDomain !== undefined) {
+        const normalizedNew = widgetData.verifiedDomain
+          ? normalizeDomain(widgetData.verifiedDomain)
+          : "";
+        const normalizedOld = existingWidget.verifiedDomain
+          ? normalizeDomain(existingWidget.verifiedDomain)
+          : "";
+        if (normalizedNew !== normalizedOld) {
+          if (normalizedNew) {
+            cleanUpdates.verifiedDomain = normalizedNew;
+            if (
+              !requiresDomainVerification(config.app.env, normalizedNew) ||
+              isLocalDomain(normalizedNew)
+            ) {
+              cleanUpdates.domainVerificationToken = null;
+              cleanUpdates.domainVerificationStatus = "verified";
+            } else {
+              cleanUpdates.domainVerificationToken =
+                "atrium_" + crypto.randomBytes(16).toString("hex");
+              cleanUpdates.domainVerificationStatus = "pending";
+            }
+          } else {
+            cleanUpdates.verifiedDomain = null;
+            cleanUpdates.domainVerificationToken = null;
+            cleanUpdates.domainVerificationStatus = null;
+          }
+        }
+      }
+
+      return Widget.findOneAndUpdate({ organizationId }, cleanUpdates, {
+        returnDocument: "after",
+        runValidators: true,
+      });
+    }
+
+    const newWidgetData = { ...normalizedWidgetData };
+    if (widgetData?.verifiedDomain) {
+      const normalizedNew = normalizeDomain(widgetData.verifiedDomain);
+      newWidgetData.verifiedDomain = normalizedNew;
+      if (
+        !requiresDomainVerification(config.app.env, normalizedNew) ||
+        isLocalDomain(normalizedNew)
+      ) {
+        newWidgetData.domainVerificationToken = null;
+        newWidgetData.domainVerificationStatus = "verified";
+      } else {
+        newWidgetData.domainVerificationToken =
+          "atrium_" + crypto.randomBytes(16).toString("hex");
+        newWidgetData.domainVerificationStatus = "pending";
+      }
+    }
+
+    const widget = new Widget({
+      ...newWidgetData,
+      organizationId,
+    });
+
+    await widget.save();
+
+    logger.info("Widget created successfully", {
+      widgetId: widget._id,
+      organizationId,
+      displayName: widget.displayName,
+    });
+
+    return widget;
+  }
+
+  async getWidget(organizationId: string) {
+    let widget = await Widget.findOne({ organizationId });
+    const defaultWidgetConfig = buildDefaultWidgetConfig();
+
+    if (!widget) {
+      widget = new Widget({
+        organizationId,
+        displayName: "Atrium AI",
+        ...defaultWidgetConfig,
+        publicKey: crypto.randomBytes(16).toString("hex"),
+      });
+      await widget.save();
+      logger.info(`Auto-created default widget for org ${organizationId}`);
+      return widget;
+    }
+
+    const normalizedExisting = withWidgetConfigDefaults(widget.toObject());
+    const needsBackfill =
+      !widget.appearance ||
+      !widget.behavior ||
+      !widget.ai ||
+      !widget.conversation ||
+      !widget.features;
+
+    if (needsBackfill) {
+      await Widget.updateOne({ _id: widget._id }, normalizedExisting, {
+        runValidators: true,
+      });
+      const refreshedWidget = await Widget.findById(widget._id);
+      if (refreshedWidget) widget = refreshedWidget;
+    }
+
+    return widget;
+  }
+
+  async updateWidget(organizationId: string, updateData: any) {
+    const normalizedUpdateData = withWidgetConfigDefaults(
+      updateData || {},
+      true,
+    );
+    const allowedUpdates: any = {
+      displayName: normalizedUpdateData.displayName,
+      appearance: normalizedUpdateData.appearance,
+      behavior: normalizedUpdateData.behavior,
+      ai: normalizedUpdateData.ai,
+      conversation: normalizedUpdateData.conversation,
+      features: normalizedUpdateData.features,
+      suggestions: normalizedUpdateData.suggestions,
+    };
+
+    const cleanUpdates = Object.fromEntries(
+      Object.entries(allowedUpdates).filter(([_, v]) => v !== undefined),
+    );
+
+    const existingWidget = await Widget.findOne({ organizationId });
+
+    if (updateData?.verifiedDomain !== undefined) {
+      const normalizedNew = updateData.verifiedDomain
+        ? normalizeDomain(updateData.verifiedDomain)
+        : "";
+      const normalizedOld = existingWidget?.verifiedDomain
+        ? normalizeDomain(existingWidget.verifiedDomain)
+        : "";
+
+      if (normalizedNew !== normalizedOld) {
+        if (normalizedNew) {
+          cleanUpdates.verifiedDomain = normalizedNew;
+          if (
+            !requiresDomainVerification(config.app.env, normalizedNew) ||
+            isLocalDomain(normalizedNew)
+          ) {
+            cleanUpdates.domainVerificationToken = null;
+            cleanUpdates.domainVerificationStatus = "verified";
+          } else {
+            cleanUpdates.domainVerificationToken =
+              "atrium_" + crypto.randomBytes(16).toString("hex");
+            cleanUpdates.domainVerificationStatus = "pending";
+          }
+        } else {
+          cleanUpdates.verifiedDomain = null;
+          cleanUpdates.domainVerificationToken = null;
+          cleanUpdates.domainVerificationStatus = null;
+        }
+      }
+    }
+
+    let widget = await Widget.findOneAndUpdate(
+      { organizationId },
+      cleanUpdates,
+      {
+        returnDocument: "after",
+        runValidators: true,
+      },
+    );
+
+    if (!widget) {
+      const initData: any = {
+        organizationId,
+        displayName: normalizedUpdateData.displayName || "Atrium AI",
+        appearance: normalizedUpdateData.appearance,
+        behavior: normalizedUpdateData.behavior,
+        ai: normalizedUpdateData.ai,
+        conversation: normalizedUpdateData.conversation,
+        features: normalizedUpdateData.features,
+        publicKey: crypto.randomBytes(16).toString("hex"),
+      };
+      if (updateData?.verifiedDomain) {
+        const normalizedNew = normalizeDomain(updateData.verifiedDomain);
+        initData.verifiedDomain = normalizedNew;
+        if (
+          !requiresDomainVerification(config.app.env, normalizedNew) ||
+          isLocalDomain(normalizedNew)
+        ) {
+          initData.domainVerificationToken = null;
+          initData.domainVerificationStatus = "verified";
+        } else {
+          initData.domainVerificationToken =
+            "atrium_" + crypto.randomBytes(16).toString("hex");
+          initData.domainVerificationStatus = "pending";
+        }
+      }
+      widget = new Widget(initData);
+      await widget.save();
+    }
+
+    const oldStatus = existingWidget?.domainVerificationStatus;
+    const newStatus = widget?.domainVerificationStatus;
+    if (
+      widget &&
+      newStatus === "pending" &&
+      oldStatus !== "pending" &&
+      widget.verifiedDomain &&
+      widget.domainVerificationToken
+    ) {
+      this.sendDomainVerificationEmail(
+        organizationId,
+        "pending",
+        widget.verifiedDomain,
+        widget.domainVerificationToken,
+      );
+    }
+
+    if (widget?._id) {
+      redisClient.del(`widget:${widget._id.toString()}:config`).catch(() => {});
+    }
+    if (widget?.publicKey) {
+      redisClient.del(`widget:${widget.publicKey}:config`).catch(() => {});
+    }
+
+    return widget;
+  }
+
+  private createVerifiedDomainRecord(domainInput: string) {
+    const domain = normalizeDomain(domainInput);
+    if (!domain) {
+      throw createServiceError("A valid domain is required", 400);
+    }
+
+    const verificationRequired =
+      requiresDomainVerification(config.app.env, domain) &&
+      !isLocalDomain(domain);
+
+    return {
+      domain,
+      verificationToken: verificationRequired
+        ? "atrium_" + crypto.randomBytes(16).toString("hex")
+        : null,
+      status: verificationRequired ? "pending" : "verified",
+      includeSubdomains: true,
+      verifiedAt: verificationRequired ? null : new Date(),
+    };
+  }
+
+  private invalidateWidgetConfig(widget: any): void {
+    if (widget?._id) {
+      redisClient.del(`widget:${widget._id.toString()}:config`).catch(() => {});
+    }
+    if (widget?.publicKey) {
+      redisClient.del(`widget:${widget.publicKey}:config`).catch(() => {});
+    }
+  }
+
+  async listWidgetDomains(organizationId: string) {
+    const widget = await this.getWidget(organizationId);
+    return this.getEffectiveVerifiedDomains(widget);
+  }
+
+  async addWidgetDomain(
+    organizationId: string,
+    domainInput: string,
+  ) {
+    const widget = await this.getWidget(organizationId);
+
+    const record = this.createVerifiedDomainRecord(domainInput);
+    const currentDomains = this.getEffectiveVerifiedDomains(widget);
+    if (currentDomains.some((entry) => entry.domain === record.domain)) {
+      throw createServiceError("This domain is already configured", 409);
+    }
+    if (currentDomains.length >= 25) {
+      throw createServiceError("A widget can have at most 25 domains", 400);
+    }
+
+    const verifiedParent = currentDomains.find(
+      (entry) =>
+        entry.status === "verified" &&
+        entry.domain !== record.domain &&
+        isDomainMatch(record.domain, entry.domain),
+    );
+    if (verifiedParent) {
+      record.status = "verified";
+      record.verificationToken = null;
+      record.verifiedAt = verifiedParent.verifiedAt || new Date();
+    }
+
+    (widget.verifiedDomains as any).push(record);
+    await widget.save();
+    this.invalidateWidgetConfig(widget);
+
+    if (record.status === "pending" && record.verificationToken) {
+      this.sendDomainVerificationEmail(
+        organizationId,
+        "pending",
+        record.domain,
+        record.verificationToken,
+      ).catch((error) =>
+        logger.error("Failed to send domain verification email", error),
+      );
+    }
+
+    return this.getEffectiveVerifiedDomains(widget).find(
+      (entry) => entry.domain === record.domain,
+    );
+  }
+
+  async updateWidgetDomain(
+    organizationId: string,
+    domainId: string,
+    updates: { domain?: string; includeSubdomains?: boolean },
+  ) {
+    const widget = await Widget.findOne({ organizationId });
+    if (!widget) throw createServiceError("Widget not found", 404);
+    let resultDomain = "";
+    let notifyPending = false;
+
+    if (domainId === "legacy") {
+      if (!widget.verifiedDomain) {
+        throw createServiceError("Domain not found", 404);
+      }
+      const replacement = this.createVerifiedDomainRecord(
+        updates.domain || widget.verifiedDomain,
+      );
+      const legacyDomain = normalizeDomain(widget.verifiedDomain);
+      if (
+        replacement.domain === legacyDomain &&
+        widget.domainVerificationStatus === "verified"
+      ) {
+        replacement.status = "verified";
+        replacement.verificationToken = null;
+        replacement.verifiedAt = widget.updatedAt || new Date();
+      }
+      const duplicate = this.getEffectiveVerifiedDomains(widget).some(
+        (entry) =>
+          entry._id !== "legacy" && entry.domain === replacement.domain,
+      );
+      if (duplicate)
+        throw createServiceError("This domain is already configured", 409);
+
+      // Updating a legacy entry migrates it into the new collection atomically.
+      (widget.verifiedDomains as any).push(replacement);
+      resultDomain = replacement.domain;
+      notifyPending = replacement.status === "pending";
+      widget.verifiedDomain = undefined;
+      widget.domainVerificationToken = undefined;
+      widget.domainVerificationStatus = null;
+    } else {
+      const domainEntry: any = (widget.verifiedDomains as any).id(domainId);
+      if (!domainEntry) throw createServiceError("Domain not found", 404);
+
+      if (updates.domain !== undefined) {
+        const normalizedDomain = normalizeDomain(updates.domain);
+        if (!normalizedDomain)
+          throw createServiceError("A valid domain is required", 400);
+        const duplicate = this.getEffectiveVerifiedDomains(widget).some(
+          (entry) =>
+            entry._id !== domainId && entry.domain === normalizedDomain,
+        );
+        if (duplicate)
+          throw createServiceError("This domain is already configured", 409);
+
+        if (normalizedDomain !== normalizeDomain(domainEntry.domain)) {
+          const replacement = this.createVerifiedDomainRecord(
+            normalizedDomain,
+          );
+          domainEntry.set(replacement);
+          notifyPending = replacement.status === "pending";
+        }
+      }
+      domainEntry.includeSubdomains = true;
+      resultDomain = normalizeDomain(domainEntry.domain);
+    }
+
+    await widget.save();
+    this.invalidateWidgetConfig(widget);
+    const result = this.getEffectiveVerifiedDomains(widget).find(
+      (entry) => entry.domain === resultDomain,
+    );
+
+    if (notifyPending && result?.verificationToken) {
+      this.sendDomainVerificationEmail(
+        organizationId,
+        "pending",
+        result.domain,
+        result.verificationToken,
+      ).catch((error) =>
+        logger.error("Failed to send domain verification email", error),
+      );
+    }
+    return result;
+  }
+
+  async removeWidgetDomain(organizationId: string, domainId: string) {
+    const widget = await Widget.findOne({ organizationId });
+    if (!widget) throw createServiceError("Widget not found", 404);
+
+    if (domainId === "legacy") {
+      if (!widget.verifiedDomain)
+        throw createServiceError("Domain not found", 404);
+      widget.verifiedDomain = undefined;
+      widget.domainVerificationToken = undefined;
+      widget.domainVerificationStatus = null;
+    } else {
+      const domainEntry: any = (widget.verifiedDomains as any).id(domainId);
+      if (!domainEntry) throw createServiceError("Domain not found", 404);
+      domainEntry.deleteOne();
+    }
+
+    await widget.save();
+    this.invalidateWidgetConfig(widget);
+    return this.getEffectiveVerifiedDomains(widget);
+  }
+
+  async verifyWidgetDomain(organizationId: string, domainId?: string) {
+    const widget = await Widget.findOne({ organizationId });
+    if (!widget) {
+      throw createServiceError("Widget not found", 404);
+    }
+
+    let target: any;
+    let isLegacy = false;
+    if (domainId) {
+      if (domainId === "legacy") {
+        if (!widget.verifiedDomain) {
+          throw createServiceError("Domain not found", 404);
+        }
+        isLegacy = true;
+      } else {
+        target = (widget.verifiedDomains as any).id(domainId);
+        if (!target) throw createServiceError("Domain not found", 404);
+      }
+    } else if (widget.verifiedDomain) {
+      // Compatibility for POST /verify-domain.
+      isLegacy = true;
+    } else if (widget.verifiedDomains.length === 1) {
+      target = widget.verifiedDomains[0];
+    } else {
+      throw createServiceError(
+        "Choose a domain using the domain-specific verification endpoint",
+        400,
+      );
+    }
+
+    const domain = isLegacy ? widget.verifiedDomain : target?.domain;
+    const verificationToken = isLegacy
+      ? widget.domainVerificationToken
+      : target?.verificationToken;
+
+    if (
+      !requiresDomainVerification(config.app.env, domain || "") ||
+      isLocalDomain(domain || "")
+    ) {
+      if (isLegacy) {
+        widget.domainVerificationStatus = "verified";
+        widget.domainVerificationToken = undefined;
+      } else {
+        target.status = "verified";
+        target.verificationToken = null;
+        target.verifiedAt = new Date();
+      }
+      this.markConfiguredSubdomainsVerified(widget, domain || "");
+      await widget.save();
+      this.invalidateWidgetConfig(widget);
+      return {
+        success: true,
+        domainVerificationStatus: "verified",
+        verifiedDomain: domain,
+      };
+    }
+
+    if (!domain || !verificationToken) {
+      throw createServiceError(
+        "Domain verification has not been configured for this widget",
+        400,
+      );
+    }
+
+    const host = normalizeDomain(domain);
+
+    let txtRecords: string[][];
+    try {
+      txtRecords = await dns.promises.resolveTxt(host);
+    } catch (dnsError: any) {
+      logger.warn(`DNS lookup failed for domain ${host}: ${dnsError.message}`);
+      throw createServiceError(
+        `Verification failed: Could not find any TXT records for "${host}". Please make sure the record has propagated.`,
+        400,
+      );
+    }
+
+    const isTokenFound = txtRecords.some((record) =>
+      record.some((value) => value.trim() === verificationToken),
+    );
+
+    if (!isTokenFound) {
+      throw createServiceError(
+        `Verification failed: Token "${verificationToken}" not found in DNS TXT records for "${host}".`,
+        400,
+      );
+    }
+
+    if (isLegacy) {
+      widget.domainVerificationStatus = "verified";
+    } else {
+      target.status = "verified";
+      target.verifiedAt = new Date();
+    }
+    this.markConfiguredSubdomainsVerified(widget, domain);
+    await widget.save();
+
+    logger.info(
+      `Widget domain verified successfully for org ${organizationId}: ${domain}`,
+    );
+
+    if (domain) {
+      this.sendDomainVerificationEmail(
+        organizationId,
+        "completed",
+        domain,
+      ).catch((err) => {
+        logger.error(
+          `Failed to send domain completed email for org ${organizationId}:`,
+          err,
+        );
+      });
+    }
+
+    this.invalidateWidgetConfig(widget);
+
+    return {
+      success: true,
+      domainVerificationStatus: "verified",
+      verifiedDomain: domain,
+    };
+  }
+
+  private markConfiguredSubdomainsVerified(
+    widget: any,
+    parentDomainInput: string,
+  ): void {
+    const parentDomain = normalizeDomain(parentDomainInput);
+    if (!parentDomain) return;
+
+    const verifiedAt = new Date();
+    const configuredDomains = Array.isArray(widget.verifiedDomains)
+      ? widget.verifiedDomains
+      : [];
+
+    for (const entry of configuredDomains) {
+      const childDomain = normalizeDomain(entry.domain || "");
+      entry.includeSubdomains = true;
+      if (
+        childDomain &&
+        childDomain !== parentDomain &&
+        isDomainMatch(childDomain, parentDomain)
+      ) {
+        entry.status = "verified";
+        entry.verificationToken = null;
+        entry.verifiedAt = entry.verifiedAt || verifiedAt;
+      }
+    }
+
+    const legacyDomain = normalizeDomain(widget.verifiedDomain || "");
+    if (
+      legacyDomain &&
+      legacyDomain !== parentDomain &&
+      isDomainMatch(legacyDomain, parentDomain)
+    ) {
+      widget.domainVerificationStatus = "verified";
+      widget.domainVerificationToken = undefined;
+    }
+  }
+
+  async sendDomainVerificationEmail(
+    organizationId: string,
+    event: "pending" | "completed",
+    domain: string,
+    token?: string,
+  ) {
+    const admins = await Membership.find({
+      organizationId,
+      role: { $in: ["owner", "admin"] },
+      inviteStatus: "accepted",
+    }).populate("userId", "name email");
+
+    for (const admin of admins) {
+      const user = admin.userId as any;
+      if (user && user.email) {
+        if (event === "pending" && token) {
+          await enqueueDomainVerificationPendingEmail(
+            user.email,
+            user.name || "Administrator",
+            domain,
+            token,
+          );
+        } else if (event === "completed") {
+          await enqueueDomainVerificationCompletedEmail(
+            user.email,
+            user.name || "Administrator",
+            domain,
+          );
+        }
+      }
+    }
+  }
+
+  async initConversation(
+    input: InitConversationInput,
+  ): Promise<InitConversationResult> {
+    const { organizationId, message, AtriumPublicKey, sessionId, source } =
+      input;
+
+    const interactionSource = normalizeInteractionSource(source);
+    const assignedAgentId: string | null = null;
+
+    const conversation = await Conversation.create({
+      organizationId,
+      participants: [],
+      subject: "New conversation from widget",
+      status: "open",
+      priority: "medium",
+      tags: [],
+      assignedTo: assignedAgentId,
+      createdBy: undefined,
+      sessionId,
+      metadata: {
+        customer: {
+          initialMessage: message,
+          startedAt: new Date(),
+        },
+        widgetKey: AtriumPublicKey || null,
+        source: "widget",
+        interactionSource,
+      },
+    });
+
+    logger.info(`New conversation initialized: ${conversation.id} from widget`);
+
+    tracker.trackEvent(
+      organizationId.toString(),
+      "conversation_started",
+      "system",
+      {
+        isAnonymous: true,
+        initialMessageLength: message.length,
+        source: interactionSource,
+      },
+      {
+        conversationId: conversation.id,
+        widgetId: AtriumPublicKey,
+        channel: interactionSource === "qr" ? "qr" : "widget",
+      },
+    );
+
+    return {
+      conversationId: conversation.id,
+      sessionId,
+      isAnonymous: true,
+      assignedTo: assignedAgentId,
+      assignedAgent: assignedAgentId,
+      metadata: {},
+    };
+  }
+
+  async getWidgetConversations(organizationId: string, sessionId: string): Promise<any[]> {
+    const WIDGET_CONVERSATION_SOURCES = ["widget", "qr", "link"];
+    
+    // Find contact associated with the current sessionId
+    const contact = await Contact.findOne({
+      organizationId: new Types.ObjectId(organizationId),
+      sessionId,
+    }).lean();
+
+    const queryOr: any[] = [{ sessionId }];
+    
+    if (contact) {
+      if (contact.email) {
+        queryOr.push(
+          { "metadata.customer.email": contact.email },
+          { "metadata.senderEmail": contact.email }
+        );
+      }
+      if (contact.phone) {
+        queryOr.push(
+          { "metadata.customer.phone": contact.phone },
+          { "metadata.visitorPhone": contact.phone }
+        );
+      }
+    }
+
+    const conversations = await Conversation.find({
+      organizationId,
+      $or: queryOr,
+      "metadata.source": { $in: WIDGET_CONVERSATION_SOURCES },
+      status: { $ne: "closed" },
+    })
+      .select("_id subject status createdAt updatedAt sessionId assignedTo metadata")
+      .populate("assignedTo", "name email")
+      .sort({ updatedAt: -1 })
+      .limit(50)
+      .lean();
+
+    return Promise.all(
+      conversations.map(async (conv) => {
+        const lastMessage = await Message.findOne({
+          conversationId: conv._id,
+        })
+          .sort({ createdAt: -1 })
+          .select("content createdAt")
+          .lean();
+
+        const agentName =
+          conv.assignedTo && typeof conv.assignedTo === "object"
+            ? (conv.assignedTo as any).name
+            : null;
+
+        return {
+          _id: conv._id,
+          id: conv._id,
+          subject: conv.subject,
+          status: conv.status,
+          createdAt: conv.createdAt,
+          updatedAt: conv.updatedAt,
+          assignedTo:
+            conv.assignedTo && typeof conv.assignedTo === "object"
+              ? (conv.assignedTo as any)._id
+              : conv.assignedTo,
+          assignedAgent: agentName,
+          lastMessage: lastMessage
+            ? {
+              content: lastMessage.content,
+              createdAt: lastMessage.createdAt,
+            }
+            : null,
+          lastMessageAt: lastMessage?.createdAt || conv.createdAt,
+        };
+      })
+    );
+  }
+
+  async getConversationMessages(
+    organizationId: string,
+    conversationId: string,
+    sessionId: string
+  ): Promise<any[]> {
+    const WIDGET_CONVERSATION_SOURCES = ["widget", "qr", "link"];
+    
+    // Find contact associated with the current sessionId
+    const contact = await Contact.findOne({
+      organizationId: new Types.ObjectId(organizationId),
+      sessionId,
+    }).lean();
+
+    const queryOr: any[] = [{ sessionId }];
+    
+    if (contact) {
+      if (contact.email) {
+        queryOr.push(
+          { "metadata.customer.email": contact.email },
+          { "metadata.senderEmail": contact.email }
+        );
+      }
+      if (contact.phone) {
+        queryOr.push(
+          { "metadata.customer.phone": contact.phone },
+          { "metadata.visitorPhone": contact.phone }
+        );
+      }
+    }
+
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      organizationId,
+      $or: queryOr,
+      "metadata.source": { $in: WIDGET_CONVERSATION_SOURCES },
+    });
+
+    if (!conversation) {
+      throw createServiceError("Conversation not found", 404);
+    }
+
+    const messages = await Message.find({
+      conversationId,
+    })
+      .sort({ createdAt: 1 })
+      .select("senderId content type metadata createdAt")
+      .lean();
+
+    return messages.map((msg) => ({
+      content: msg.content,
+      type: msg.type,
+      sender: ["widget", "telegram_channel", "whatsapp_channel", "email_channel"].includes(
+        msg.metadata?.source
+      )
+        ? "visitor"
+        : "agent",
+      senderId: msg.senderId,
+      senderName: msg.metadata?.senderName || "Unknown",
+      senderEmail: msg.metadata?.senderEmail,
+      timestamp: msg.createdAt,
+      createdAt: msg.createdAt,
+      metadata: msg.metadata || {},
+    }));
+  }
+}

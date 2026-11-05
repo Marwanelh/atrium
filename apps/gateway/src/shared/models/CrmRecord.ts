@@ -1,0 +1,205 @@
+import mongoose, { Document, Schema, Types } from "mongoose";
+
+export type CrmRecordStage = string;
+export type CrmRecordColor =
+  | "slate"
+  | "red"
+  | "orange"
+  | "amber"
+  | "yellow"
+  | "cyan"
+  | "blue"
+  | "violet"
+  | "pink"
+  | "emerald";
+
+export interface ICrmRecordActivity {
+  id: string;
+  type: "note" | "status" | "planned" | "message";
+  content: string;
+  category?: "todo" | "email" | "call" | "meeting" | "document";
+  dueAt?: Date | null;
+  durationMinutes?: number;
+  completedAt?: Date | null;
+  createdAt: Date;
+  customFields?: Record<string, unknown>;
+  googleCalendarEventId?: string | null;
+  googleCalendarId?: string | null;
+  googleCalendarEventUrl?: string | null;
+  googleMeetUrl?: string | null;
+  calendarSyncStatus?: "synced" | "failed" | null;
+  calendarSyncError?: string | null;
+}
+
+export interface ICrmRecord extends Document {
+  _id: Types.ObjectId;
+  organizationId: Types.ObjectId;
+  contactId?: Types.ObjectId | null;
+  primaryContactId?: Types.ObjectId | null;
+  accountId?: Types.ObjectId | null;
+  title: string;
+  recordType: "lead" | "deal";
+  labels: string[];
+  sourceOrigin?: string;
+  sourceChannel?: string;
+  sourceChannelId?: string;
+  company?: string;
+  value: number;
+  currency: "USD" | "INR" | "EUR" | "GBP";
+  stage: CrmRecordStage;
+  color: CrmRecordColor;
+  position: number;
+  priority: 1 | 2 | 3;
+  ownerId?: Types.ObjectId | null;
+  expectedCloseAt?: Date | null;
+  nextAction?: string;
+  activities: ICrmRecordActivity[];
+  customFields: Record<string, unknown>;
+  sourceSubmissionId?: Types.ObjectId | null;
+  archivedAt?: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const crmRecordSchema = new Schema<ICrmRecord>(
+  {
+    organizationId: {
+      type: Schema.Types.ObjectId,
+      ref: "Organization",
+      required: true,
+    },
+    contactId: {
+      type: Schema.Types.ObjectId,
+      ref: "Contact",
+      default: null,
+    },
+    primaryContactId: {
+      type: Schema.Types.ObjectId,
+      ref: "Contact",
+      default: null,
+    },
+    accountId: {
+      type: Schema.Types.ObjectId,
+      ref: "Account",
+      default: null,
+    },
+    title: { type: String, required: true, trim: true, maxlength: 160 },
+    recordType: {
+      type: String,
+      enum: ["lead", "deal"],
+      default: "deal",
+      index: true,
+    },
+    labels: { type: [String], default: [] },
+    sourceOrigin: { type: String, trim: true, maxlength: 120 },
+    sourceChannel: { type: String, trim: true, maxlength: 120 },
+    sourceChannelId: { type: String, trim: true, maxlength: 160 },
+    company: { type: String, trim: true, maxlength: 160 },
+    value: { type: Number, min: 0, default: 0 },
+    currency: {
+      type: String,
+      enum: ["USD", "INR", "EUR", "GBP"],
+      default: "USD",
+    },
+    stage: {
+      type: String,
+      trim: true,
+      maxlength: 64,
+      default: "qualified",
+    },
+    color: {
+      type: String,
+      enum: [
+        "slate",
+        "red",
+        "orange",
+        "amber",
+        "yellow",
+        "cyan",
+        "blue",
+        "violet",
+        "pink",
+        "emerald",
+      ],
+      default: "slate",
+    },
+    position: { type: Number, min: 0, default: 0 },
+    priority: { type: Number, enum: [1, 2, 3], default: 1 },
+    ownerId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    expectedCloseAt: { type: Date, default: null },
+    nextAction: { type: String, trim: true, maxlength: 500 },
+    activities: {
+      type: [
+        new Schema<ICrmRecordActivity>(
+          {
+            id: { type: String, required: true },
+            type: {
+              type: String,
+              enum: ["note", "status", "planned", "message"],
+              default: "note",
+            },
+            content: {
+              type: String,
+              required: true,
+              trim: true,
+              maxlength: 2000,
+            },
+            category: {
+              type: String,
+              enum: ["todo", "email", "call", "meeting", "document"],
+              default: "todo",
+            },
+            dueAt: { type: Date, default: null },
+            durationMinutes: { type: Number, min: 5, max: 1440, default: 60 },
+            completedAt: { type: Date, default: null },
+            createdAt: { type: Date, required: true, default: Date.now },
+            customFields: { type: Map, of: Schema.Types.Mixed, default: {} },
+            googleCalendarEventId: { type: String, default: null },
+            googleCalendarId: { type: String, default: null },
+            googleCalendarEventUrl: { type: String, default: null },
+            googleMeetUrl: { type: String, default: null },
+            calendarSyncStatus: {
+              type: String,
+              enum: ["synced", "failed", null],
+              default: null,
+            },
+            calendarSyncError: { type: String, default: null, maxlength: 500 },
+          },
+          { _id: false },
+        ),
+      ],
+      default: [],
+    },
+    customFields: { type: Map, of: Schema.Types.Mixed, default: {} },
+    sourceSubmissionId: {
+      type: Schema.Types.ObjectId,
+      ref: "LeadSubmission",
+      default: null,
+    },
+    archivedAt: { type: Date, default: null },
+  },
+  { timestamps: true },
+);
+
+crmRecordSchema.index({ organizationId: 1, stage: 1, updatedAt: -1 });
+crmRecordSchema.index({ organizationId: 1, recordType: 1, archivedAt: 1 });
+crmRecordSchema.index({ organizationId: 1, contactId: 1 });
+crmRecordSchema.index({ organizationId: 1, primaryContactId: 1 });
+crmRecordSchema.index({ organizationId: 1, accountId: 1 });
+crmRecordSchema.index({ organizationId: 1, ownerId: 1 });
+crmRecordSchema.index(
+  { organizationId: 1, sourceSubmissionId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { sourceSubmissionId: { $type: "objectId" } },
+    name: "unique_opportunity_per_lead_submission",
+  },
+);
+
+// Keep the existing collection name so this terminology change does not
+// require a database migration.
+export const CrmRecord = mongoose.model<ICrmRecord>(
+  "CrmRecord",
+  crmRecordSchema,
+  "opportunities",
+);

@@ -1,0 +1,35 @@
+{
+  "name": "atrium",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev:full": "pnpm run docker:start && turbo run dev --filter=!./apps/launcher",
+    "dev": "turbo run dev --filter=!./apps/launcher",
+    "docker:start": "cd docker && docker-compose -f docker-compose.dev.yml up -d redis mongodb mongo-express mailhog silo qdrant",
+    "docker:stop": "cd docker && docker-compose -f docker-compose.dev.yml down",
+    "widget:deploy": "cd apps/launcher && pnpm run deploy",
+    "widget:deploy:prod": "cd apps/launcher && pnpm run deploy:prod",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "check-types": "turbo run check-types",
+    "verify:build": "pnpm --filter @atrium/gateway run build && pnpm --filter @atrium/agent run build && pnpm --filter @atrium/worker run build && pnpm --filter @atrium/console run build && pnpm --filter @atrium/launcher run build",
+    "verify:types": "pnpm --filter @atrium/gateway exec tsc --noEmit -p tsconfig.json && pnpm --filter @atrium/agent exec tsc --noEmit -p tsconfig.json && pnpm --filter @atrium/worker exec tsc --noEmit -p tsconfig.json && pnpm --filter @atrium/console exec tsc -b && pnpm --filter @atrium/launcher run type-check",
+    "verify:lint": "pnpm --filter @atrium/console run lint && pnpm --filter @atrium/launcher run lint",
+    "verify:test": "pnpm --filter @atrium/gateway run test",
+    "verify": "pnpm run verify:types && pnpm run verify:lint && pnpm run verify:test && pnpm run verify:build"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2",
+    "turbo": "^2.5.5",
+    "typescript": "5.8.3"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "dependencies": {
+    "dodopayments": "^2.27.0",
+    "zod": "^4.3.6"
+  },
+  "license": "MIT"
+}

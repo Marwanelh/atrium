@@ -1,0 +1,323 @@
+services:
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"       # HTTP → HTTPS redirect
+      - "443:443"     # HTTPS
+      - "443:443/udp" # HTTP/3 (QUIC)
+    environment:
+      API_HOST: ${API_HOST:-localhost}
+      WEB_HOST: ${WEB_HOST:-localhost}
+      CDN_HOST: ${CDN_HOST:-localhost}
+      LOG_HOST: ${LOG_HOST:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      console:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    networks:
+      - Atrium-network
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # One-shot: builds widget JS and deploys it to Silo on every stack startup.
+  # Exits after deploy (restart: no). Re-runs on `docker-compose up`.
+  # Uses runtime config injection via entrypoint.sh (same pattern as the web app).
+  launcher-deploy:
+    build:
+      context: ../apps/launcher
+      dockerfile: Dockerfile
+    image: atrium-launcher:latest
+    restart: no
+    env_file:
+      - ../apps/launcher/.env.docker
+    environment:
+      # Always sourced from docker/.env — single source of truth for Silo credentials
+      SILO_ACCESS_KEY: ${SILO_ROOT_USER}
+      SILO_SECRET_KEY: ${SILO_ROOT_PASSWORD}
+      API_URL_PRODUCTION: ${API_URL_PRODUCTION}
+      CDN_URL_PRODUCTION: ${SILO_PUBLIC_URL}
+    depends_on:
+      silo:
+        condition: service_healthy
+    networks:
+      - Atrium-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  console: 
+    build:
+      context: ../apps/console
+      dockerfile: Dockerfile
+    image: atrium-console:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"  # Caddy is the public entry-point; bind locally for health checks only
+    env_file:
+      - ../apps/console/.env.docker
+    environment:
+      VITE_API_URL: ${API_URL_PRODUCTION}/api/v1
+      VITE_SOCKET_URL: ${API_URL_PRODUCTION}
+      VITE_WIDGET_URL: ${SILO_PUBLIC_URL}/atrium-widget/v1/Atrium.js
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - Atrium-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  gateway:
+    build:
+      context: ../apps/gateway
+      dockerfile: Dockerfile
+    image: atrium-gateway:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3002:3002"  # Caddy is the public entry-point; bind locally for health checks only
+    env_file:
+      - ../apps/gateway/.env.docker
+    environment:
+      # Shared infrastructure values come from docker/.env so credentials cannot drift.
+      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongodb:27017/${MONGO_DATABASE:-atrium}?authSource=admin
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SILO_ACCESS_KEY: ${SILO_ROOT_USER}
+      SILO_SECRET_KEY: ${SILO_ROOT_PASSWORD}
+      SILO_PUBLIC_URL: ${SILO_PUBLIC_URL}
+      PUBLIC_API_URL: ${API_URL_PRODUCTION}
+      COMPOSIO_ENABLED: ${COMPOSIO_ENABLED:-false}
+      COMPOSIO_API_KEY: ${COMPOSIO_API_KEY:-}
+      COMPOSIO_REDIRECT_URL: ${COMPOSIO_REDIRECT_URL:-}
+      COMPOSIO_ENVIRONMENT: ${COMPOSIO_ENVIRONMENT:-self-host}
+    volumes:
+      - ../ee:/app/ee:ro
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      silo:
+        condition: service_healthy
+    networks:
+      - Atrium-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3002/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  agent:
+    build:
+      context: ../apps/agent
+      dockerfile: Dockerfile
+    image: atrium-agent:latest
+    restart: unless-stopped
+    env_file:
+      - ../apps/agent/.env.docker
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      SILO_ACCESS_KEY: ${SILO_ROOT_USER}
+      SILO_SECRET_KEY: ${SILO_ROOT_PASSWORD}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    networks:
+      - Atrium-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  worker:
+    build:
+      context: ../apps/worker
+      dockerfile: Dockerfile
+    image: atrium-worker:latest
+    restart: unless-stopped
+    env_file:
+      - ../apps/worker/.env.docker
+    environment:
+      MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongodb:27017/${MONGO_DATABASE:-atrium}?authSource=admin
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    volumes:
+      - ../ee:/app/ee:ro
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - Atrium-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"  # Only accessible from localhost for security
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE:-atrium}
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_backups:/backups
+    networks:
+      - Atrium-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"  # Only accessible from localhost
+    volumes:
+      - redis_data:/data
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    command: >
+      sh -c "redis-server 
+      --appendonly yes 
+      --requirepass $${REDIS_PASSWORD}
+      --maxmemory-policy noeviction"
+    networks:
+      - Atrium-network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a $$REDIS_PASSWORD ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  silo:
+    image: pgsty/silo:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9002:9002" 
+    environment:
+      # Silo retains these MINIO_* server variables as its stable compatibility interface.
+      MINIO_ROOT_USER: ${SILO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${SILO_ROOT_PASSWORD}
+      MINIO_SERVER_URL: ${SILO_PUBLIC_URL}
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    command: server /data --console-address ":9002" --address ":9001"
+    volumes:
+      - silo_data:/data
+    networks:
+      - Atrium-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9001/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"  # REST API
+      - "127.0.0.1:6334:6334"  # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - Atrium-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  log-viewer:
+    image: amir20/dozzle:latest
+    container_name: atrium-log-viewer
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${LOG_VIEWER_PORT:-8888}:8080"
+    environment:
+      - DOZZLE_AUTH_PROVIDER=simple
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./users.yml:/data/users.yml:ro
+    networks:
+      - Atrium-network
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_backups:
+    driver: local
+  redis_data:
+    driver: local
+  silo_data:
+    driver: local
+  qdrant_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+
+networks:
+  Atrium-network:
+    driver: bridge

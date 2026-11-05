@@ -1,0 +1,39 @@
+#!/bin/sh
+# Replaces build-time placeholder strings with real env var values at startup.
+# This makes one generic Docker image work with any deployment.
+#
+# Required environment variables:
+#   - API_URL_PRODUCTION: Backend API URL (e.g., https://api.Atrium.cloud)
+#   - CDN_URL_PRODUCTION: CDN base URL (e.g., https://cdn.Atrium.cloud)
+
+set -e
+
+escape_sed_replacement() {
+  printf '%s' "$1" | sed 's/[\/&|\\]/\\&/g'
+}
+
+replace() {
+  PLACEHOLDER="$1"
+  VALUE="$2"
+  TARGET_DIR="$3"
+  
+  if [ -n "$VALUE" ] && [ "$VALUE" != "$PLACEHOLDER" ]; then
+    ESCAPED_VALUE="$(escape_sed_replacement "$VALUE")"
+    # Replace in JS files
+    find "$TARGET_DIR" -type f -name "*.js" \
+      -exec sed -i "s|$PLACEHOLDER|$ESCAPED_VALUE|g" {} + 2>/dev/null || true
+    # Replace in HTML files
+    find "$TARGET_DIR" -type f -name "*.html" \
+      -exec sed -i "s|$PLACEHOLDER|$ESCAPED_VALUE|g" {} + 2>/dev/null || true
+    echo "  ✓ $PLACEHOLDER → $VALUE"
+  else
+    echo "  ⚠ $PLACEHOLDER not set — keeping placeholder (widget may not work correctly)"
+  fi
+}
+
+echo "Configuring widget runtime environment..."
+replace "__API_URL_PRODUCTION__" "$API_URL_PRODUCTION" "/app/dist"
+replace "__CDN_URL_PRODUCTION__" "$CDN_URL_PRODUCTION" "/app/dist"
+echo "Done. Deploying widget to Silo..."
+
+exec node deploy-to-silo.js

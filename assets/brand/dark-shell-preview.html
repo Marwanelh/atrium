@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<title>Atrium dark shell — preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+/* Values copied verbatim from apps/console/src/index.css (.dark). */
+:root {
+  --background:#0d0d0e; --foreground:#ececee;
+  --card:#161618; --card-foreground:#ececee;
+  --popover:#1c1c1f; --muted:#1a1a1d; --muted-foreground:#9a9aa2;
+  --accent:#232327; --accent-foreground:#f4f4f5;
+  --primary:#0053fd; --primary-foreground:#ffffff;
+  --secondary:#1f1f23; --secondary-foreground:#ececee;
+  --border:#26262b; --input:#17171a; --ring:#0053fd;
+  --success:#55a583; --warning:#d9a441; --destructive:#e75e78; --info:#6f9ba6;
+  --sidebar:#0a0a0b; --sidebar-foreground:#b4b4bb;
+  --sidebar-accent:#1c1c20; --sidebar-accent-foreground:#f4f4f5;
+  --sidebar-border:#1e1e22;
+  --radius:.2rem;
+  --shadow:0 1px 3px 0 rgb(0 0 0/.6), 0 1px 2px -1px rgb(0 0 0/.6);
+  --shadow-lg:0 4px 6px 0 rgb(0 0 0/.6), 0 4px 6px -1px rgb(0 0 0/.6);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--background);color:var(--foreground);
+     font-family:"Hanken Grotesk",ui-sans-serif,system-ui,sans-serif;font-size:14px;
+     display:flex;height:100vh;overflow:hidden}
+
+/* sidebar */
+aside{width:216px;flex-shrink:0;background:var(--sidebar);border-right:1px solid var(--sidebar-border);
+      display:flex;flex-direction:column;padding:14px 0}
+.brand{display:flex;align-items:center;gap:9px;padding:2px 14px 16px;color:var(--foreground)}
+.brand b{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.nav{padding:0 8px;display:flex;flex-direction:column;gap:1px}
+.item{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:var(--radius);
+      color:var(--sidebar-foreground);font-size:13.5px}
+.item.on{background:var(--sidebar-accent);color:var(--sidebar-accent-foreground);font-weight:500}
+.dot{width:14px;height:14px;border-radius:3px;background:currentColor;opacity:.5;flex-shrink:0}
+.item.on .dot{background:var(--primary);opacity:1}
+.navlabel{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+          color:var(--muted-foreground);padding:14px 17px 6px;opacity:.75}
+
+/* main */
+main{flex:1;display:flex;flex-direction:column;min-width:0}
+header{height:52px;flex-shrink:0;border-bottom:1px solid var(--border);display:flex;
+       align-items:center;gap:12px;padding:0 20px}
+.search{flex:1;max-width:340px;background:var(--input);border:1px solid var(--border);
+        border-radius:var(--radius);padding:6px 11px;color:var(--muted-foreground);font-size:13px}
+.pill{background:var(--secondary);color:var(--secondary-foreground);border:1px solid var(--border);
+      border-radius:var(--radius);padding:5px 10px;font-size:12.5px;font-weight:500}
+.avatar{margin-left:auto;width:27px;height:27px;border-radius:50%;background:var(--primary);
+        color:var(--primary-foreground);display:flex;align-items:center;justify-content:center;
+        font-size:11px;font-weight:600}
+.content{padding:20px;display:flex;flex-direction:column;gap:16px;overflow:hidden}
+h1{font-size:19px;font-weight:600;letter-spacing:-.01em}
+.sub{color:var(--muted-foreground);font-size:13px;margin-top:2px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+      padding:13px 14px;box-shadow:var(--shadow)}
+.stat .k{color:var(--muted-foreground);font-size:11px;font-weight:600;letter-spacing:.05em;
+         text-transform:uppercase}
+.stat .v{font-size:23px;font-weight:600;margin-top:5px;letter-spacing:-.02em}
+.stat .d{font-size:12px;margin-top:3px}
+.up{color:var(--success)} .down{color:var(--destructive)} .flat{color:var(--info)}
+
+.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+       box-shadow:var(--shadow);overflow:hidden}
+.panel h2{font-size:13.5px;font-weight:600;padding:12px 15px;border-bottom:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;
+   color:var(--muted-foreground);padding:9px 15px;border-bottom:1px solid var(--border)}
+td{padding:11px 15px;border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--accent)}
+.who{display:flex;align-items:center;gap:9px}
+.ini{width:25px;height:25px;border-radius:50%;background:var(--secondary);color:var(--secondary-foreground);
+     display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:600;flex-shrink:0}
+.badge{display:inline-flex;align-items:center;gap:5px;border-radius:9999px;padding:2px 9px;
+       font-size:11.5px;font-weight:600;border:1px solid}
+.b-open{color:var(--warning);border-color:color-mix(in srgb,var(--warning) 32%,transparent);
+        background:color-mix(in srgb,var(--warning) 13%,transparent)}
+.b-res{color:var(--success);border-color:color-mix(in srgb,var(--success) 32%,transparent);
+       background:color-mix(in srgb,var(--success) 13%,transparent)}
+.b-esc{color:var(--destructive);border-color:color-mix(in srgb,var(--destructive) 32%,transparent);
+       background:color-mix(in srgb,var(--destructive) 13%,transparent)}
+.b-ai{color:var(--info);border-color:color-mix(in srgb,var(--info) 32%,transparent);
+      background:color-mix(in srgb,var(--info) 13%,transparent)}
+.act{background:var(--primary);color:var(--primary-foreground);border:0;border-radius:var(--radius);
+     padding:7px 13px;font-size:13px;font-weight:600;font-family:inherit}
+.ghost{background:transparent;color:var(--foreground);border:1px solid var(--border);
+       border-radius:var(--radius);padding:7px 13px;font-size:13px;font-weight:500;font-family:inherit}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px;color:var(--muted-foreground)}
+code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px;
+     background:#ffffff12;color:#ffffffe0;padding:2px 5px;border-radius:3px}
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="brand">
+    <svg width="23" height="23" viewBox="0 0 24 24" fill="currentColor"><path d="M2.5 21.5V12A9.5 9.5 0 0 1 21.5 12V21.5H16V10A4 4 0 0 0 8 10V21.5Z"/></svg>
+    <b>Atrium</b>
+  </div>
+  <nav class="nav">
+    <div class="item on"><span class="dot"></span>Inbox</div>
+    <div class="item"><span class="dot"></span>Tickets</div>
+    <div class="item"><span class="dot"></span>Contacts</div>
+    <div class="item"><span class="dot"></span>Pipeline</div>
+    <div class="navlabel">Knowledge</div>
+    <div class="item"><span class="dot"></span>Sources</div>
+    <div class="item"><span class="dot"></span>Widget</div>
+    <div class="navlabel">Workspace</div>
+    <div class="item"><span class="dot"></span>Channels</div>
+    <div class="item"><span class="dot"></span>Integrations</div>
+    <div class="item"><span class="dot"></span>Settings</div>
+  </nav>
+</aside>
+
+<main>
+  <header>
+    <div class="search">Search conversations…</div>
+    <button class="pill">Last 7 days</button>
+    <button class="pill">All channels</button>
+    <button class="act">New message</button>
+    <div class="avatar">ME</div>
+  </header>
+
+  <div class="content">
+    <div>
+      <h1>Inbox</h1>
+      <div class="sub">42 conversations · 9 waiting on a human · 3 escalated in the last hour</div>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="k">Open</div><div class="v">128</div><div class="d up">+12% this week</div></div>
+      <div class="stat"><div class="k">Resolved by AI</div><div class="v">74%</div><div class="d up">+5.2 pts</div></div>
+      <div class="stat"><div class="k">Median reply</div><div class="v">38s</div><div class="d flat">unchanged</div></div>
+      <div class="stat"><div class="k">Escalated</div><div class="v">9</div><div class="d down">+3 today</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Waiting on a human</h2>
+      <table>
+        <thead><tr><th>Customer</th><th>Question</th><th>Channel</th><th>State</th><th>Age</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><div class="who"><span class="ini">AK</span>Amira K.</div></td>
+            <td>Refund for order <code>#48192</code> not showing</td>
+            <td>WhatsApp</td>
+            <td><span class="badge b-open">Needs review</span></td>
+            <td class="mono">4m</td>
+          </tr>
+          <tr>
+            <td><div class="who"><span class="ini">JT</span>Jonas T.</div></td>
+            <td>Can I change the delivery address after dispatch?</td>
+            <td>Email</td>
+            <td><span class="badge b-ai">AI drafted</span></td>
+            <td class="mono">11m</td>
+          </tr>
+          <tr>
+            <td><div class="who"><span class="ini">RP</span>Rhea P.</div></td>
+            <td>Wants to cancel and be invoiced instead</td>
+            <td>Widget</td>
+            <td><span class="badge b-esc">Escalated</span></td>
+            <td class="mono">27m</td>
+          </tr>
+          <tr>
+            <td><div class="who"><span class="ini">DM</span>Diego M.</div></td>
+            <td>Question answered from the knowledge base</td>
+            <td>Telegram</td>
+            <td><span class="badge b-res">Resolved</span></td>
+            <td class="mono">1h</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="display:flex;gap:10px">
+      <button class="act">Assign to me</button>
+      <button class="ghost">Snooze</button>
+      <button class="ghost">Open knowledge</button>
+    </div>
+  </div>
+</main>
+
+</body>
+</html>

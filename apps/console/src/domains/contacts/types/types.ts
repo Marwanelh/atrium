@@ -1,0 +1,271 @@
+export type ContactLifecycleStage =
+  | "new"
+  | "qualified"
+  | "opportunity"
+  | "customer"
+  | "inactive"
+  | "lost";
+export type ContactLeadStatus =
+  | "needs_review"
+  | "contacted"
+  | "follow_up"
+  | "converted"
+  | "unqualified";
+export type ContactChannel =
+  | "widget"
+  | "email"
+  | "whatsapp"
+  | "telegram"
+  | "phone";
+export type ContactAcquisitionSource =
+  | ContactChannel
+  | "qr"
+  | "manual"
+  | "facebook_lead_ads"
+  | "google_forms"
+  | "unknown";
+
+export type ContactMethodType = "work" | "home" | "mobile" | "other";
+export interface ContactMethod {
+  value: string;
+  type: ContactMethodType;
+}
+
+export interface ContactIntegrationSource {
+  provider: "facebook_lead_ads" | "google_forms" | string;
+  providerLabel: string;
+  formId: string;
+  formName: string;
+  receivedAt: string | null;
+}
+
+export interface ContactOwner {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export interface ContactWritePayload {
+  name?: string;
+  email?: string;
+  phone?: string;
+  emails?: ContactMethod[];
+  phones?: ContactMethod[];
+  company?: string;
+  accountId?: string | null;
+  tags?: string[];
+  lifecycleStage?: ContactLifecycleStage;
+  leadStatus?: ContactLeadStatus;
+  ownerId?: string | null;
+  acquisitionSource?: ContactAcquisitionSource;
+  preferredChannel?: ContactChannel | null;
+  nextFollowUpAt?: string | null;
+  lastContactedAt?: string | null;
+  customFields?: Record<string, unknown>;
+}
+
+export interface ContactNote {
+  id: string;
+  author: string;
+  content: string;
+  pinned?: boolean;
+  createdAt: string;
+}
+
+export interface ContactTimelineItem {
+  id: string;
+  type: "email" | "file" | "document" | "activity";
+  title: string;
+  content?: string;
+  fileName?: string;
+  fileKey?: string;
+  mimeType?: string;
+  size?: number;
+  activityType?: "call" | "meeting" | "task" | "deadline" | "lunch";
+  startAt?: string;
+  endAt?: string;
+  priority?: "none" | "low" | "medium" | "normal" | "high";
+  status?: "scheduled" | "done";
+  location?: string;
+  videoCallUrl?: string;
+  author: string;
+  createdAt: string;
+}
+
+export interface ContactConversation {
+  id: string;
+  status: "open" | "resolved" | "closed";
+  lastMessage: string;
+  channel: string;
+  updatedAt: string;
+}
+
+export interface ContactInsight {
+  summary: string;
+  sentiment: "positive" | "neutral" | "negative";
+  topics: string[];
+}
+
+export interface ContactConflict {
+  id: string;
+  field: "name" | "phone" | "company";
+  currentValue: string;
+  proposedValue: string;
+  conversationId: string;
+  createdAt: string;
+}
+
+export interface Contact {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  emails?: ContactMethod[];
+  phones?: ContactMethod[];
+  company?: string;
+  account?: {
+    id: string;
+    name: string;
+    website?: string;
+    industry?: string;
+  } | null;
+  tags: string[];
+  lifecycleStage: ContactLifecycleStage;
+  leadStatus: ContactLeadStatus;
+  owner: ContactOwner | null;
+  acquisitionSource: ContactAcquisitionSource;
+  integrationSources: ContactIntegrationSource[];
+  preferredChannel: ContactChannel | null;
+  nextFollowUpAt: string | null;
+  lastContactedAt: string | null;
+  lastActivity: string;
+  createdAt: string;
+  isOnline: boolean;
+  conversationCount: number;
+  notes: ContactNote[];
+  timelineItems?: ContactTimelineItem[];
+  conversations: ContactConversation[];
+  insights: ContactInsight;
+  conflicts: ContactConflict[];
+  customFields?: Record<string, unknown>;
+}
+
+export interface ContactListItem {
+  id: string;
+  sessionId: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  emails?: ContactMethod[];
+  phones?: ContactMethod[];
+  company?: string;
+  account?: {
+    id: string;
+    name: string;
+    website?: string;
+    industry?: string;
+  } | null;
+  tags: string[];
+  source: "ai" | "widget" | "agent" | "owner" | "admin" | "integration";
+  lifecycleStage: ContactLifecycleStage;
+  leadStatus: ContactLeadStatus;
+  owner: ContactOwner | null;
+  acquisitionSource: ContactAcquisitionSource;
+  integrationSources?: ContactIntegrationSource[];
+  preferredChannel: ContactChannel | null;
+  nextFollowUpAt: string | null;
+  lastContactedAt: string | null;
+  notes: Array<{
+    id: string;
+    author: string;
+    content: string;
+    createdAt: string;
+  }>;
+  timelineItems?: ContactTimelineItem[];
+  conversations: Array<{
+    id: string;
+    status: "open" | "resolved" | "closed";
+    lastMessage: string;
+    channel: string;
+    updatedAt: string;
+  }>;
+  insights: {
+    summary: string;
+    sentiment: "positive" | "neutral" | "negative";
+    topics: string[];
+  };
+  conflicts?: Array<{
+    id: string;
+    field: "name" | "phone" | "company";
+    currentValue: string;
+    proposedValue: string;
+    conversationId: string;
+    createdAt: string;
+  }>;
+  conversationCount: number;
+  lastActivity: string;
+  createdAt: string;
+  updatedAt: string;
+  customFields?: Record<string, unknown>;
+}
+
+export interface ContactConflictItem {
+  id: string;
+  contactId: string;
+  contactName: string;
+  contactEmail: string;
+  field: "name" | "phone" | "company";
+  currentValue: string;
+  proposedValue: string;
+  conversationId: string;
+  createdAt: string;
+}
+
+export const toContactViewModel = (item: ContactListItem): Contact => ({
+  id: item.id,
+  name: item.name,
+  email: item.email,
+  phone: item.phone,
+  emails:
+    item.emails || (item.email ? [{ value: item.email, type: "work" }] : []),
+  phones:
+    item.phones || (item.phone ? [{ value: item.phone, type: "work" }] : []),
+  company: item.company,
+  account: item.account || null,
+  tags: item.tags || [],
+  lifecycleStage: item.lifecycleStage || "new",
+  leadStatus: item.leadStatus || "needs_review",
+  owner: item.owner || null,
+  acquisitionSource: item.acquisitionSource || "unknown",
+  integrationSources: item.integrationSources || [],
+  preferredChannel: item.preferredChannel || null,
+  nextFollowUpAt: item.nextFollowUpAt || null,
+  lastContactedAt: item.lastContactedAt || null,
+  lastActivity: item.lastActivity,
+  createdAt: item.createdAt,
+  isOnline: false,
+  conversationCount: item.conversationCount,
+  notes: item.notes || [],
+  timelineItems: item.timelineItems || [],
+  conversations:
+    item.conversations && item.conversations.length > 0
+      ? item.conversations
+      : [
+          {
+            id: `conv-${item.id}`,
+            status: "open",
+            lastMessage: "Conversation context is still syncing.",
+            channel: "widget",
+            updatedAt: item.updatedAt,
+          },
+        ],
+  insights: {
+    summary:
+      item.insights?.summary ||
+      "No insights yet. Continue conversations to generate AI insights.",
+    sentiment: item.insights?.sentiment || "neutral",
+    topics: item.insights?.topics || [],
+  },
+  conflicts: item.conflicts || [],
+  customFields: item.customFields || {},
+});

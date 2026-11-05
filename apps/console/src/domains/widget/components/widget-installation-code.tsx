@@ -1,0 +1,135 @@
+import { Check, Code2, Copy, Terminal } from "lucide-react";
+
+interface WidgetInstallationCodeProps {
+  isExistingWidget: boolean;
+  widgetId?: string;
+  cdnUrl: string;
+  isCopied: boolean;
+  onCopy: () => void;
+}
+
+export function WidgetInstallationCode({
+  isExistingWidget,
+  widgetId,
+  cdnUrl,
+  isCopied,
+  onCopy,
+}: WidgetInstallationCodeProps) {
+  const publicKey = isExistingWidget ? widgetId : "your-widget-key";
+  const snippet = `<script\n  src="${cdnUrl}"\n  data-Atrium-public-key="${publicKey || "your-widget-key"}"\n  async>\n</script>`;
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-border bg-card" data-tour-id="page-widget-installation">
+      {/* Header */}
+      <div className="border-b border-border/60 px-6 py-5">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+            <Code2 className="h-4 w-4 text-primary" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold text-foreground">Installation</h2>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Paste this snippet before the closing{" "}
+              <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">&lt;/body&gt;</code>{" "}
+              tag
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="grid grid-cols-1 divide-y divide-border/60 lg:grid-cols-5 lg:divide-x lg:divide-y-0">
+        {/* Code panel — 3 cols */}
+        <div className="p-5 sm:p-6 lg:col-span-3">
+          {/* Editor chrome */}
+          <div className="rounded-xl overflow-hidden border border-border bg-muted/50">
+            {/* Titlebar */}
+            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-b border-border/70 bg-card px-4 py-2.5">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-destructive/80" />
+                <div className="w-2.5 h-2.5 rounded-full bg-warning/80" />
+                <div className="w-2.5 h-2.5 rounded-full bg-success/80" />
+              </div>
+              <span className="text-[11px] text-muted-foreground font-medium tracking-wide">index.html</span>
+              <button
+                type="button"
+                onClick={onCopy}
+                className={`ml-auto cursor-pointer inline-flex items-center gap-1.5 h-7 px-3 rounded-md text-[11px] font-semibold border transition-all duration-200 ${isCopied
+                    ? "bg-primary/15 border-primary/30 text-primary"
+                    : "bg-background/70 border-border text-muted-foreground hover:bg-accent/70 hover:border-primary/20 hover:text-foreground"
+                  }`}
+              >
+                {isCopied ? (
+                  <><Check className="h-3 w-3" />Copied!</>
+                ) : (
+                  <><Copy className="h-3 w-3" />Copy</>
+                )}
+              </button>
+            </div>
+
+            {/* Line numbers + code */}
+            <div className="flex overflow-x-auto">
+              {/* Line numbers */}
+              <div className="select-none px-3 py-4 text-right text-[12px] leading-6 text-muted-foreground/60 font-mono border-r border-border/70 flex-shrink-0">
+                {snippet.split("\n").map((_, i) => (
+                  <div key={i}>{i + 1}</div>
+                ))}
+              </div>
+              {/* Code */}
+              <pre className="py-4 px-4 text-[13px] leading-6 font-mono text-foreground flex-1 min-w-0">
+                {snippet.split("\n").map((line, i) => (
+                  <div key={i} className="whitespace-pre">
+                    {line.startsWith("  ") ? (
+                      <><span className="text-muted-foreground/50">{"  "}</span><span className="text-primary/90">{line.trimStart()}</span></>
+                    ) : line.startsWith("<script") ? (
+                      <><span className="text-info/90">&lt;</span><span className="text-primary">script</span></>
+                    ) : line === "</script>" ? (
+                      <><span className="text-info/90">&lt;/</span><span className="text-primary">script</span><span className="text-info/90">&gt;</span></>
+                    ) : line === "  async>" ? (
+                      <><span className="text-muted-foreground/50">{"  "}</span><span className="text-warning">async</span><span className="text-info/90">&gt;</span></>
+                    ) : (
+                      <span className="text-foreground/90">{line}</span>
+                    )}
+                  </div>
+                ))}
+              </pre>
+            </div>
+          </div>
+        </div>
+
+        {/* Steps panel — 2 cols */}
+        <div className="space-y-5 p-5 sm:p-6 lg:col-span-2">
+          <div className="flex items-center gap-2">
+            <Terminal className="h-4 w-4 text-primary" />
+            <h4 className="text-sm font-semibold text-foreground">How to install</h4>
+          </div>
+
+          <ol className="space-y-4">
+            {[
+              { label: "Save your widget", desc: 'Click "Update Configuration" to save your current settings.' },
+              { label: "Copy the snippet", desc: "Use the copy button in the code panel on the left." },
+              { label: "Paste into HTML", desc: <>Add it before the closing <code className="text-xs bg-muted px-1 rounded font-mono">&lt;/body&gt;</code> tag on every page.</> },
+              { label: "You're live 🎉", desc: "Publish your site — the widget appears automatically." },
+            ].map((step, i) => (
+              <li key={i} className="flex gap-3">
+                <span className="flex-shrink-0 h-6 w-6 rounded-full bg-primary/10 border border-primary/20 text-primary text-[11px] font-bold flex items-center justify-center mt-0.5">
+                  {i + 1}
+                </span>
+                <div>
+                  <p className="text-sm font-medium text-foreground">{step.label}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{step.desc}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+
+          {!isExistingWidget && (
+            <div className="rounded-xl border border-warning/30 bg-warning/8 p-3 text-xs text-foreground/80 leading-relaxed">
+              ⚠ Save your widget configuration first to get your real public key.
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}

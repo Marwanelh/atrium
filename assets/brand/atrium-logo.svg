@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 40" role="img" aria-label="Atrium" fill="currentColor">
+  <!--
+    Horizontal lockup: mark plus wordmark.
+
+    The wordmark uses a text element with a system-font stack so the file stays
+    editable and diffable; outline it to paths before using it in print or in
+    any context where the font must not be substituted.
+  -->
+  <path d="M4 35V19.5A11.5 11.5 0 0 1 27 19.5V35h-6.5V16.25a4.75 4.75 0 0 0-9.5 0V35H4Z"/>
+  <text x="38" y="29"
+        font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+        font-size="24" font-weight="600" letter-spacing="-0.6">Atrium</text>
+</svg>
