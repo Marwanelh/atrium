@@ -2,7 +2,7 @@ import { QdrantClient } from "@qdrant/js-client-rest";
 import config from "../../config";
 import { VectorStore, VectorSearchResult } from "./vector.types";
 
-const COLLECTION = "interaOne_knowledge";
+const COLLECTION = "atrium_knowledge";
 
 class QdrantVectorStore implements VectorStore {
   private client: QdrantClient;

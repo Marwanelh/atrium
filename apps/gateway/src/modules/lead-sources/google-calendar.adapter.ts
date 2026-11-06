@@ -181,7 +181,7 @@ export class GoogleCalendarAdapter {
               }
             : undefined,
           extendedProperties: {
-            private: { interaOneActivityId: input.requestId },
+            private: { atriumActivityId: input.requestId },
           },
         }),
       },
