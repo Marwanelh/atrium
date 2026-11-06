@@ -15,6 +15,27 @@ import {
   WidgetSuggestionsForm,
 } from "@/domains/widget/components";
 
+/** Billing/subscription envelope returned by GET /organizations/:id. */
+interface OrganizationBillingResponse {
+  success: boolean;
+  data: {
+    organization: {
+      subscriptionStatus?: string | null;
+      [key: string]: unknown;
+    };
+  };
+}
+
+/** Usage envelope returned by GET /organizations/:id/billing/usage. */
+interface OrganizationUsageResponse {
+  success: boolean;
+  data: {
+    usage: {
+      messages: { limit: number | null; used: number };
+    };
+  };
+}
+
 const CDN_URL =
   import.meta.env.VITE_WIDGET_URL ||
   "http://localhost:9001/atrium-widget/v1/Atrium.js";
@@ -138,8 +159,8 @@ export function WidgetPage() {
     const checkBillingStatus = async () => {
       try {
         const [orgRes, usageRes] = await Promise.allSettled([
-          apiClient.get<any>(`/organizations/${orgId}`),
-          apiClient.get<any>(`/organizations/${orgId}/billing/usage?t=${Date.now()}`),
+          apiClient.get<OrganizationBillingResponse>(`/organizations/${orgId}`),
+          apiClient.get<OrganizationUsageResponse>(`/organizations/${orgId}/billing/usage?t=${Date.now()}`),
         ]);
 
         if (orgRes.status === "fulfilled" && orgRes.value?.data?.organization) {

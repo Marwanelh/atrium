@@ -1,8 +1,9 @@
 import type { Organization, User } from "@/shared/types/types";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { LoginPayload, SignupPayload } from "../types/types";
+import type { LoginPayload, SignupPayload, SignupResponse } from "../types/types";
 import { authApi } from "../api/auth.api";
+import type { CompleteSignupPayload } from "../api/auth.api";
 
 interface AuthState {
   user: User | null;
@@ -12,19 +13,22 @@ interface AuthState {
 
   // Actions
   login: (loginPayload: LoginPayload) => Promise<void>;
-  signup: (signupPayload: SignupPayload) => Promise<any>;
+  signup: (signupPayload: SignupPayload) => Promise<SignupResponse["data"]>;
   acceptInvite: (token: string, password?: string) => Promise<boolean>;
   logout: () => void;
   updateUser: (user: User) => void;
   setOrganization: (org: Organization | null) => void;
   initializeAuth: () => Promise<void>;
-  completeSignup: (data: any) => Promise<any>;
+  completeSignup: (data: CompleteSignupPayload) => Promise<SignupResponse["data"]>;
 }
 
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => {
-      const completeSignupAction = async (data: any, errorMessage = "Signup completion failed") => {
+      const completeSignupAction = async (
+        data: CompleteSignupPayload,
+        errorMessage = "Signup completion failed"
+      ): Promise<SignupResponse["data"]> => {
         try {
           const response = await authApi.completeSignup(data);
 
@@ -126,7 +130,14 @@ export const useAuthStore = create<AuthState>()(
       },
 
       signup: async (signupPayload: SignupPayload) => {
-        return completeSignupAction(signupPayload, "Signup failed");
+        // The wizard collects `companyName`; the API contract calls it
+        // `organizationName`. Map here so both shapes stay honest.
+        const payload: CompleteSignupPayload = {
+          email: signupPayload.email,
+          organizationName: signupPayload.companyName,
+          password: signupPayload.password,
+        };
+        return completeSignupAction(payload, "Signup failed");
       },
 
       acceptInvite: async (token: string, password?: string) => {
@@ -172,7 +183,7 @@ export const useAuthStore = create<AuthState>()(
           authApi.setOrgPlan(org.plan);
         }
       },
-      completeSignup: async (data: any) => {
+      completeSignup: async (data: CompleteSignupPayload) => {
         return completeSignupAction(data, "Signup completion failed");
       },
 

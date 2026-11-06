@@ -72,10 +72,10 @@ export function KnowledgeStaticPage() {
       toast.success("Knowledge added successfully", {
         description: "Your content has been queued for indexing.",
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error adding knowledge:", err);
       toast.error("Failed to add knowledge item", {
-        description: err?.message,
+        description: err instanceof Error ? err.message : undefined,
       });
     } finally {
       setIsSubmitting(false);

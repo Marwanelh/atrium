@@ -38,6 +38,7 @@ import { useAuth } from "@/domains/auth/hooks/useAuth";
 import { useLogout } from "@/domains/auth/hooks/useLogout";
 import { authApi } from "@/domains/auth/api/auth.api";
 import { useConversationDetail } from "@/domains/conversation/hooks/useConversationDetail";
+import type { ConversationListItem } from "@/domains/conversation/types/types";
 import { useTicket } from "@/domains/tickets/hooks/useTicket";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -194,7 +195,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     if (!isAuthenticated || !user) return [];
 
     const merged = [...unassignedConvs, ...myConvs];
-    const uniqueMap = new Map<string, any>();
+    const uniqueMap = new Map<string, ConversationListItem>();
 
     for (const conv of merged) {
       uniqueMap.set(conv._id, conv);
@@ -209,7 +210,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       .slice(0, 5);
   }, [unassignedConvs, myConvs, isAuthenticated, user]);
 
-  const getVisitorName = (conv: any) =>
+  const getVisitorName = (conv: ConversationListItem) =>
     conv.metadata?.customer?.name ||
     conv.metadata?.senderName ||
     conv.metadata?.customerName ||

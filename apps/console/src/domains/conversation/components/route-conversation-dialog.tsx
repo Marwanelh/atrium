@@ -22,6 +22,7 @@ import { UserPlus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useRouteConversation } from "../hooks";
 import { useAgents } from "@/domains/agent/hooks";
+import type { Agent } from "@/domains/agent/types/types";
 
 interface RouteConversationDialogProps {
   conversationId: string;
@@ -61,8 +62,8 @@ export function RouteConversationDialog({
       toast.success(`Conversation routed to ${response.data.agentName || "agent"}`);
       setOpen(false);
       onRouted?.();
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to route conversation");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to route conversation");
     } finally {
       setLoading(false);
     }
@@ -103,7 +104,7 @@ export function RouteConversationDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="auto-assign">Auto-assign (least busy)</SelectItem>
-                {agents.map((agent: any) => (
+                {agents.map((agent: Agent) => (
                   <SelectItem key={agent.user._id} value={agent.user._id}>
                     {agent.user.name} ({agent.user.email})
                   </SelectItem>

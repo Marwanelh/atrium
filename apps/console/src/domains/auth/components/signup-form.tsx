@@ -33,6 +33,16 @@ import { authApi } from "../api/auth.api.ts";
 
 type FieldName = "name" | "email" | "password" | "confirmPassword" | "companyName" | "verifiedDomain";
 type FieldErrors = Partial<Record<FieldName, string>>;
+
+/** Shape of the signup wizard's local form state. */
+interface SignupFormData {
+  name: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+  companyName: string;
+  verifiedDomain: string;
+}
 type TouchedFields = Record<FieldName, boolean>;
 
 const totalSteps = 5;
@@ -57,7 +67,7 @@ const stepTransition = {
 };
 
 
-function getFieldError(field: FieldName, formData: any) {
+function getFieldError(field: FieldName, formData: SignupFormData) {
   switch (field) {
     case "name":
       return validateName(formData.name);
@@ -159,7 +169,7 @@ export function SignupForm() {
         { name: formData.name, email: formData.email },
         {
           onSuccess: () => setCurrentStep(2),
-          onError: (err: any) => setError(err.message || "Failed to start signup"),
+          onError: (err: unknown) => setError(err instanceof Error ? err.message : "Failed to start signup"),
         }
       );
     } else if (currentStep === 2) {
@@ -167,8 +177,8 @@ export function SignupForm() {
       try {
         await authApi.verifyOTP(formData.email, otp, "email_verification");
         setCurrentStep(3);
-      } catch (err: any) {
-        setError(err.message || "Invalid or expired code");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Invalid or expired code");
       } finally {
         setIsVerifying(false);
       }
@@ -195,7 +205,7 @@ export function SignupForm() {
         onSuccess: () => {
           window.location.href = "/dashboard";
         },
-        onError: (err: any) => setError(err.message || "Final setup failed"),
+        onError: (err: unknown) => setError(err instanceof Error ? err.message : "Final setup failed"),
       }
     );
   };

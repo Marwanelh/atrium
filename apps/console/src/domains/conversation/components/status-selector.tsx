@@ -45,8 +45,8 @@ export function StatusSelector({
       toast.success(
         `Status updated to ${statusConfig[newStatus as keyof typeof statusConfig].label}`,
       );
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to update status");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update status");
       setStatus(currentStatus);
     } finally {
       setUpdating(false);

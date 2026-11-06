@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import { analyticsApi } from "../api/analytics.api";
 import { authApi } from "@/domains/auth/api/auth.api";
 import type {
@@ -58,14 +59,14 @@ export function useAgentDashboardStats() {
  * Call these when data changes to sync frontend with backend
  */
 export const analyticsCache = {
-  invalidateSummary: async (queryClient: any) => {
+  invalidateSummary: async (queryClient: QueryClient) => {
     await queryClient.invalidateQueries({
       queryKey: ["analytics", "summary"],
       refetchType: "active",
     });
   },
 
-  invalidateTrends: async (queryClient: any, days?: number) => {
+  invalidateTrends: async (queryClient: QueryClient, days?: number) => {
     if (days) {
       await queryClient.invalidateQueries({
         queryKey: ["analytics", "trends", days],
@@ -79,7 +80,7 @@ export const analyticsCache = {
     }
   },
 
-  invalidateAll: async (queryClient: any) => {
+  invalidateAll: async (queryClient: QueryClient) => {
     await queryClient.invalidateQueries({
       queryKey: ["analytics"],
       refetchType: "active",

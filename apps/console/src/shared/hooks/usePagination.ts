@@ -7,12 +7,15 @@ export function usePagination<T>(
 ) {
   const [currentPage, setCurrentPage] = useState(1);
 
-  // Reset to page 1 when dependencies change (e.g., filters).
-  // Defer state update to avoid sync setState in effects warnings.
+  // Reset to page 1 when the filter values change. Callers pass an inline array,
+  // so its identity changes every render; a stringified key makes the effect fire
+  // only when the *contents* actually change. The state update stays deferred to
+  // the next tick to keep the render pass free of synchronous setState.
+  const dependenciesKey = JSON.stringify(dependencies);
   useEffect(() => {
     const timeout = setTimeout(() => setCurrentPage(1), 0);
     return () => clearTimeout(timeout);
-  }, dependencies);
+  }, [dependenciesKey]);
 
   const totalItems = items.length;
   const totalPages = Math.ceil(totalItems / itemsPerPage);

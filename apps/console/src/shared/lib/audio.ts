@@ -4,7 +4,12 @@
  */
 export function playNotificationSound() {
   try {
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    // Safari only exposes the audio context behind a vendor prefix. Type the
+    // prefixed member explicitly instead of reaching for `any`.
+    const prefixedWindow = window as Window & {
+      webkitAudioContext?: typeof AudioContext;
+    };
+    const AudioContextClass = window.AudioContext || prefixedWindow.webkitAudioContext;
     if (!AudioContextClass) return;
 
     const audioCtx = new AudioContextClass();

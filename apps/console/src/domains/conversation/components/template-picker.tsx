@@ -176,8 +176,8 @@ export function TemplatePicker({
       }
       resetForm();
       setFormOpen(false);
-    } catch (error: any) {
-      toast.error(error?.message || "Template save failed");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Template save failed");
     }
   };
 
@@ -206,8 +206,8 @@ export function TemplatePicker({
       await deleteTemplate.mutateAsync(template._id);
       if (editingId === template._id) resetForm();
       toast.success("Template deleted");
-    } catch (error: any) {
-      toast.error(error?.message || "Template delete failed");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Template delete failed");
     }
   };
 

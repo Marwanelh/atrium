@@ -164,3 +164,52 @@ export interface TemplateInput {
   category?: string;
 }
 
+/** A single tool invocation recorded inside an agent run. */
+export interface AgentRunStep {
+  toolName?: string;
+  args?: unknown;
+  result?: unknown;
+  error?: string;
+  timestamp: string;
+}
+
+/** A single agent execution turn recorded against a conversation. */
+export interface AgentRun {
+  _id: string;
+  status: string;
+  createdAt: string;
+  duration: number;
+  steps?: AgentRunStep[];
+  error?: string;
+  messageId?: string;
+  usage?: {
+    totalTokens?: number;
+    promptTokens?: number;
+    completionTokens?: number;
+  };
+  [key: string]: unknown;
+}
+
+export interface AgentRunsResponse {
+  success: boolean;
+  data: AgentRun[];
+}
+
+/** Compact conversation row used by the recents sidebar. */
+export interface RecentConversation {
+  _id: string;
+  subject: string;
+  visitorName: string;
+  channel: string;
+  lastMessage?: string;
+  openedAt: number;
+  status?: string;
+  ticketId?: string;
+  ticketNumber?: string;
+}
+
+export interface RecentConversationsResponse {
+  success: boolean;
+  data: RecentConversation[];
+}
+

@@ -63,7 +63,7 @@ export function LoginForm() {
   };
 
   const requiresEmailVerification =
-    isError && (error?.message || "").toLowerCase().includes("verify your email");
+    isError && (error instanceof Error ? error.message : "").toLowerCase().includes("verify your email");
 
   const handleSendVerification = async () => {
     const emailError = validateEmail(formData.email);
@@ -73,8 +73,8 @@ export function LoginForm() {
     try {
       await authApi.sendEmailVerification(formData.email);
       setVerificationSent(true);
-    } catch (err: any) {
-      setVerificationError(err.message || "Failed to send verification.");
+    } catch (err) {
+      setVerificationError(err instanceof Error ? err.message : "Failed to send verification.");
     } finally {
       setIsSendingVerification(false);
     }
@@ -87,8 +87,8 @@ export function LoginForm() {
     try {
       await authApi.verifyOTP(formData.email, code, "email_verification");
       login(formData);
-    } catch (err: any) {
-      setVerificationError(err.message || "Invalid or expired code.");
+    } catch (err) {
+      setVerificationError(err instanceof Error ? err.message : "Invalid or expired code.");
     } finally {
       setIsSendingVerification(false);
     }
@@ -119,7 +119,7 @@ export function LoginForm() {
               className="bg-destructive/10 border border-destructive/20 p-3 rounded-sm flex items-center gap-3 text-destructive text-sm overflow-hidden"
             >
               <AlertCircle className="h-4 w-4 shrink-0" />
-              <p className="font-medium">{error?.message || "Login failed"}</p>
+              <p className="font-medium">{error instanceof Error ? error.message : "Login failed"}</p>
             </motion.div>
           )}
         </AnimatePresence>

@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { widgetApi } from "../api/widget.api";
-import type { UpdateWidgetData, Widget } from "../types/types";
+import type { CreateWidgetData, UpdateWidgetData, Widget } from "../types/types";
 
 interface SaveWidgetPayload {
   data: UpdateWidgetData;
@@ -13,7 +13,12 @@ export const useSaveWidget = () => {
   return useMutation({
     mutationKey: ["save-widget"],
     mutationFn: ({ data, isExisting }: SaveWidgetPayload) =>
-      isExisting ? widgetApi.updateWidget(data) : widgetApi.createWidget(data as any),
+      // The wizard collects the full widget shape on create; on update the same
+      // form is sent but every field is optional. Asserting the create contract
+      // here is honest about that: the form always supplies the required fields.
+      isExisting
+        ? widgetApi.updateWidget(data)
+        : widgetApi.createWidget(data as CreateWidgetData),
     onSuccess: (response) => {
       queryClient.setQueryData<Widget>(["widget"], response.data);
     },

@@ -43,7 +43,7 @@ export function OrgSwitcher({ isMinimized = false, onExpandSidebar }: OrgSwitche
       try {
         const res = await authApi.getMyOrganizations();
         if (res.success && res.data) {
-          const orgs = res.data.organizations as OrgMembership[];
+          const orgs = res.data.organizations;
           setMemberships(orgs);
         }
       } catch (error) {

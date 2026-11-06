@@ -5,7 +5,7 @@ import { Button } from "@/shared/ui/button";
 import { authApi } from "@/domains/auth/api/auth.api";
 import { getAtriumMode, isEeEnabledByEnv } from "@/shared/ee";
 
-interface LimitReachedPayload {
+export interface LimitReachedPayload {
   limitType: string;
   plan: string;
   limit: number;

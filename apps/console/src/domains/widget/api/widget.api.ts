@@ -16,7 +16,14 @@ export const widgetApi = {
   updateWidget: (data: UpdateWidgetData) =>
     apiClient.put<WidgetResponse>("/widget/manage", data),
 
-  verifyDomain: () => apiClient.post<any>("/widget/verify-domain"),
+  verifyDomain: () =>
+    apiClient.post<{
+      success: boolean;
+      data: {
+        domainVerificationStatus: "verified";
+        verifiedDomain: string;
+      };
+    }>("/widget/verify-domain"),
 
   getDomains: () => apiClient.get<WidgetDomainsResponse>("/widget/domains"),
 

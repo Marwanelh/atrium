@@ -55,8 +55,8 @@ export function PasswordRecoveryForm() {
     try {
       await authApi.forgotPassword(email);
       setStep("otp");
-    } catch (err: any) {
-      setError(err.message || "Failed to send reset code. Please try again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send reset code. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -69,8 +69,8 @@ export function PasswordRecoveryForm() {
     try {
       await authApi.verifyOTP(email, code, "password_reset");
       setStep("reset");
-    } catch (err: any) {
-      setError(err.message || "Invalid or expired code.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Invalid or expired code.");
     } finally {
       setIsLoading(false);
     }
@@ -97,8 +97,8 @@ export function PasswordRecoveryForm() {
       await authApi.resetPasswordWithOTP({ email, code: otp, newPassword: password });
       setIsSuccess(true);
       setTimeout(() => navigate("/auth/login"), 3000);
-    } catch (err: any) {
-      setError(err.message || "Failed to reset password.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset password.");
     } finally {
       setIsLoading(false);
     }

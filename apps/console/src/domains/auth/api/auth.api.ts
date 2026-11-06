@@ -1,5 +1,5 @@
 import { apiClient } from "../../../shared/lib/api-client";
-import type { User } from "../../../shared/types/types";
+import type { ApiResponse, OrgMembership, Organization, OrgRole, User } from "../../../shared/types/types";
 import type {
   LoginPayload,
   LoginResponse,
@@ -12,17 +12,40 @@ import type {
   CreateOrganizationResponse,
 } from "../types/types";
 
+/** Request body for the second leg of the multi-step signup. Mirrors authSchema.completeSignup. */
+export interface CompleteSignupPayload {
+  email: string;
+  organizationName: string;
+  password: string;
+  domain?: string | null;
+}
+
+/** Request body for resetting a password with an emailed OTP. Mirrors authSchema.resetPasswordWithOTP. */
+export interface ResetPasswordOtpPayload {
+  email: string;
+  code: string;
+  newPassword: string;
+}
+
+/** Result of switching the active organization — a fresh token pair scoped to that org. */
+export interface SwitchOrganizationResponse {
+  organization: Organization;
+  role: OrgRole;
+  accessToken: string;
+  refreshToken: string;
+}
+
 
 class AuthApi {
   async login(data: LoginPayload): Promise<LoginResponse> {
     return apiClient.post<LoginResponse>("/auth/login", data);
   }
 
-  async initiateSignup(data: { name: string; email: string }): Promise<any> {
-    return apiClient.post("/auth/initiate-signup", data);
+  async initiateSignup(data: { name: string; email: string }): Promise<ApiResponse<null>> {
+    return apiClient.post<ApiResponse<null>>("/auth/initiate-signup", data);
   }
 
-  async completeSignup(data: any): Promise<SignupResponse> {
+  async completeSignup(data: CompleteSignupPayload): Promise<SignupResponse> {
     const response = await apiClient.post<SignupResponse>("/auth/complete-signup", data);
 
     // Normalize bootstrap response shape from API (`organization.id`) to app shape (`organization._id`).
@@ -129,12 +152,17 @@ class AuthApi {
     this.removeOrgData();
   }
 
-  async getMyOrganizations(): Promise<any> {
-    return apiClient.get(`/organizations`);
+  // GET /organizations returns memberships ({ organization, role }), not bare
+  // organizations — the gateway populates them from the Membership collection.
+  async getMyOrganizations(): Promise<ApiResponse<{ organizations: OrgMembership[] }>> {
+    return apiClient.get<ApiResponse<{ organizations: OrgMembership[] }>>(`/organizations`);
   }
 
-  async switchOrganization(orgId: string): Promise<any> {
-    return apiClient.post(`/organizations/${orgId}/switch`, { organizationId: orgId });
+  async switchOrganization(orgId: string): Promise<ApiResponse<SwitchOrganizationResponse>> {
+    return apiClient.post<ApiResponse<SwitchOrganizationResponse>>(
+      `/organizations/${orgId}/switch`,
+      { organizationId: orgId },
+    );
   }
 
   async createOrganization(name: string): Promise<CreateOrganizationResponse> {
@@ -158,24 +186,33 @@ class AuthApi {
     });
   }
 
-  async verifyOTP(email: string, code: string, type: "email_verification" | "password_reset"): Promise<any> {
-    return apiClient.post("/auth/verify-otp", { email, code, type });
+  async verifyOTP(
+    email: string,
+    code: string,
+    type: "email_verification" | "password_reset",
+  ): Promise<ApiResponse<null>> {
+    return apiClient.post<ApiResponse<null>>("/auth/verify-otp", { email, code, type });
   }
 
-  async sendEmailVerification(email: string): Promise<any> {
-    return apiClient.post("/auth/send-email-verification", { email });
+  async sendEmailVerification(email: string): Promise<ApiResponse<null>> {
+    return apiClient.post<ApiResponse<null>>("/auth/send-email-verification", { email });
   }
 
-  async getEmailVerificationStatus(email: string): Promise<any> {
-    return apiClient.get(`/auth/email-verification-status?email=${encodeURIComponent(email)}`);
+  async getEmailVerificationStatus(email: string): Promise<ApiResponse<{ verified: boolean }>> {
+    return apiClient.get<ApiResponse<{ verified: boolean }>>(
+      `/auth/email-verification-status?email=${encodeURIComponent(email)}`,
+    );
   }
 
-  async resendOTP(email: string, type: "email_verification" | "password_reset"): Promise<any> {
-    return apiClient.post("/auth/resend-otp", { email, type });
+  async resendOTP(
+    email: string,
+    type: "email_verification" | "password_reset",
+  ): Promise<ApiResponse<null>> {
+    return apiClient.post<ApiResponse<null>>("/auth/resend-otp", { email, type });
   }
 
-  async resetPasswordWithOTP(data: any): Promise<any> {
-    return apiClient.post("/auth/reset-password-otp", data);
+  async resetPasswordWithOTP(data: ResetPasswordOtpPayload): Promise<ApiResponse<null>> {
+    return apiClient.post<ApiResponse<null>>("/auth/reset-password-otp", data);
   }
 }
 

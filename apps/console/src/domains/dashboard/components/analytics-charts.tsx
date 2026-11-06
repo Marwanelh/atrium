@@ -596,7 +596,7 @@ export function AIInteractionSourcesPieChart({
             data={data}
             dataKey="value"
             nameKey="source"
-            shape={(props: any, index?: any) => (
+            shape={(props, index) => (
               <SourceSectorShape
                 {...props}
                 total={total}

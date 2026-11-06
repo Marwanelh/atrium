@@ -31,7 +31,10 @@ import { StatusSelector } from "./status-selector";
 import { useQueryClient } from "@tanstack/react-query";
 import { useConversationDetail, useAgentRuns, useTemplates } from "../hooks";
 import type {
+  AgentRun,
+  AgentRunStep,
   ConversationDetail,
+  ConversationListItem,
   ConversationMessage,
   Template,
 } from "../types/types";
@@ -252,8 +255,10 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
     Map<
       string,
       {
-        resolve: (val: any) => void;
-        reject: (err: any) => void;
+        // Each in-flight assist request resolves to a different payload shape;
+        // the awaiting caller narrows it. `never` keeps this map free of `any`.
+        resolve: (value: never) => void;
+        reject: (reason?: unknown) => void;
       }
     >
   >(new Map());
@@ -274,9 +279,11 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
 
   const clearUnreadCount = useCallback(
     (targetConversationId: string) => {
-      queryClient.setQueriesData(
+      queryClient.setQueriesData<
+        ConversationListItem[] | { data: { conversations: ConversationListItem[] } }
+      >(
         { queryKey: ["conversations"] },
-        (previous: any) => {
+        (previous) => {
           if (Array.isArray(previous)) {
             return previous.map((conv) =>
               conv._id === targetConversationId
@@ -291,8 +298,8 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
           return {
             ...previous,
             data: {
-              ...previous.data,
-              conversations: conversations.map((conv: any) =>
+              ...previous?.data,
+              conversations: conversations.map((conv) =>
                 conv._id === targetConversationId
                   ? { ...conv, unreadCount: 0 }
                   : conv,
@@ -492,11 +499,12 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
 
     socketInstance.on(
       "assist:result",
-      (data: { requestId: string; action: string; data: any }) => {
+      (data: { requestId: string; action: string; data: unknown }) => {
         const pending = pendingRequests.current.get(data.requestId);
         if (pending) {
           pendingRequests.current.delete(data.requestId);
-          pending.resolve(data.data);
+          // Each queued promise is typed per request; widen for the resolver.
+          pending.resolve(data.data as never);
         }
       },
     );
@@ -597,12 +605,12 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
         await ticketsApi.replyToTicket(ticketId, content);
         toast.success("Reply sent to customer");
         window.dispatchEvent(new Event("atrium_recents_updated"));
-      } catch (error: any) {
+      } catch (error) {
         setMessages((prev) =>
           prev.filter((message) => message._id !== tempMessage._id),
         );
         setNewMessage(content);
-        toast.error(error?.message || "Failed to send ticket reply");
+        toast.error(error instanceof Error ? error.message : "Failed to send ticket reply");
       }
       return;
     }
@@ -634,8 +642,8 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
       );
 
       setSuggestions(result.suggestions || []);
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to generate suggestions");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to generate suggestions");
     } finally {
       setIsSuggestLoading(false);
     }
@@ -676,8 +684,8 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
         return;
       }
       setDraftAssistOptions(options);
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to rewrite draft");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to rewrite draft");
       setDraftAssistOptions([]);
       setDraftAssistMode(null);
     } finally {
@@ -706,8 +714,8 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
       });
 
       return result.note || "";
-    } catch (error: any) {
-      toast.error(error?.message || "Failed to generate note");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to generate note");
     } finally {
       setIsGeneratingNote(false);
     }
@@ -1024,7 +1032,7 @@ export function ConversationView({ conversationId }: ConversationViewProps) {
               variant="ghost"
               size="icon"
               onClick={() => {
-                const stateFrom = (location.state as any)?.from;
+                const stateFrom = (location.state as { from?: string } | null)?.from;
                 if (stateFrom) {
                   navigate(stateFrom);
                 } else {
@@ -1538,7 +1546,7 @@ function AgentRunsTab({ conversationId }: { conversationId: string }) {
         </Button>
       </div>
       <div className="space-y-3">
-        {runs.map((run: any) => {
+        {runs.map((run: AgentRun) => {
           const isExpanded = !!expandedRuns[run._id];
           const isSuccess = run.status === "success";
           const dateStr = new Date(run.createdAt).toLocaleString();
@@ -1645,7 +1653,7 @@ function AgentRunsTab({ conversationId }: { conversationId: string }) {
                       </p>
                     ) : (
                       <div className="relative border-l border-border pl-4 ml-2 space-y-4">
-                        {run.steps.map((step: any, index: number) => {
+                        {run.steps.map((step: AgentRunStep, index: number) => {
                           const stepId = `${run._id}-step-${index}`;
                           const isStepExpanded = !!expandedSteps[stepId];
                           const hasStepError = !!step.error;

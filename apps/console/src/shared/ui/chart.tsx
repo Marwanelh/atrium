@@ -102,6 +102,21 @@ ${colorConfig
 
 const ChartTooltip = RechartsPrimitive.Tooltip
 
+/**
+ * One row of Recharts' tooltip/legend payload. Recharts types this loosely and
+ * the shape varies by chart type, so only the fields read here are declared and
+ * the rest stays open for pass-through data.
+ */
+export interface ChartPayloadItem {
+  value?: number | string | null
+  name?: string
+  dataKey?: string
+  color?: string
+  fill?: string
+  payload?: { fill?: string; [key: string]: unknown }
+  [key: string]: unknown
+}
+
 const formatTooltipValue = (value: unknown) => {
   if (typeof value === "number") {
     return Math.round(value).toLocaleString()
@@ -114,20 +129,20 @@ const ChartTooltipContent = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div"> & {
     active?: boolean
-    payload?: any[]
-    label?: any
+    payload?: ChartPayloadItem[]
+    label?: React.ReactNode
     hideLabel?: boolean
     hideIndicator?: boolean
     indicator?: "line" | "dot" | "dashed"
     nameKey?: string
     labelKey?: string
-    labelFormatter?: (value: any, payload: any[]) => React.ReactNode
+    labelFormatter?: (value: unknown, payload: ChartPayloadItem[]) => React.ReactNode
     formatter?: (
-      value: any,
+      value: number | string | null | undefined,
       name: string,
-      item: any,
+      item: ChartPayloadItem,
       index: number,
-      payload: any
+      payload: ChartPayloadItem["payload"]
     ) => React.ReactNode
     color?: string
     labelClassName?: string
@@ -205,10 +220,10 @@ const ChartTooltipContent = React.forwardRef<
       >
         {!nestLabel ? tooltipLabel : null}
         <div className="grid gap-1.5">
-          {payload.map((item: any, index: number) => {
+          {payload.map((item: ChartPayloadItem, index: number) => {
             const key = `${nameKey || item.name || item.dataKey || "value"}`
             const itemConfig = config[key as keyof typeof config]
-            const indicatorColor = color || item.payload.fill || item.color
+            const indicatorColor = color || item.payload?.fill || item.color
 
             return (
               <div
@@ -281,7 +296,7 @@ const ChartLegend = RechartsPrimitive.Legend
 const ChartLegendContent = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div"> & {
-    payload?: any[]
+    payload?: ChartPayloadItem[]
     verticalAlign?: "top" | "bottom" | "middle"
     hideIcon?: boolean
     nameKey?: string

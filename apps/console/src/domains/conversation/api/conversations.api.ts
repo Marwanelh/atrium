@@ -1,8 +1,10 @@
 import { apiClient } from "@/shared/lib/api-client";
 import type {
+  AgentRunsResponse,
   ConversationDetailResponse,
   ConversationMessage,
   ConversationsResponse,
+  RecentConversationsResponse,
   RouteResponse,
   StatusResponse,
 } from "../types/types";
@@ -61,8 +63,8 @@ class ConversationsApi {
     );
   }
 
-  async getAgentRuns(conversationId: string): Promise<any> {
-    return apiClient.get<any>(`/conversations/${conversationId}/agent-runs`);
+  async getAgentRuns(conversationId: string): Promise<AgentRunsResponse> {
+    return apiClient.get<AgentRunsResponse>(`/conversations/${conversationId}/agent-runs`);
   }
 
   async suggestReply(
@@ -111,15 +113,15 @@ class ConversationsApi {
       company?: string;
       tags?: string[];
     },
-  ): Promise<any> {
-    return apiClient.post<any>(
+  ): Promise<StatusResponse> {
+    return apiClient.post<StatusResponse>(
       `/conversations/${conversationId}/contact`,
       payload,
     );
   }
 
-  async getRecentConversations(): Promise<any> {
-    return apiClient.get<any>("/conversations/recents");
+  async getRecentConversations(): Promise<RecentConversationsResponse> {
+    return apiClient.get<RecentConversationsResponse>("/conversations/recents");
   }
 }
 
